@@ -1,0 +1,432 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useStore } from "@/lib/store";
+import { isDue, isNew, isWeak } from "@/lib/srs";
+import { acceptedAnswers, firstGrapheme, normalize, shuffle } from "@/lib/utils";
+import { SpeakButton } from "@/components/SpeakButton";
+import type { Direction, Word } from "@/lib/types";
+
+type Mode = "flash" | "choice" | "type";
+type DirSetting = Direction | "mixed";
+type Source = "due" | "new" | "weak" | "starred" | "all";
+type Item = { id: string; dir: Direction; tries: number };
+
+const promptOf = (w: Word, d: Direction) => (d === "en-bn" ? w.english : w.bangla);
+const answerOf = (w: Word, d: Direction) => (d === "en-bn" ? w.bangla : w.english);
+const promptLang = (d: Direction) => (d === "en-bn" ? "en" : "bn");
+const answerLang = (d: Direction) => (d === "en-bn" ? "bn" : "en");
+
+function pool(words: Word[], source: Source, tag: string) {
+  const now = Date.now();
+  return words.filter((w) => {
+    if (tag && !w.tags.includes(tag)) return false;
+    switch (source) {
+      case "due": return isDue(w, now);
+      case "new": return isNew(w);
+      case "weak": return isWeak(w);
+      case "starred": return w.starred;
+      default: return true;
+    }
+  });
+}
+
+function buildQueue(words: Word[], source: Source, tag: string, count: number, dir: DirSetting): Item[] {
+  let list = shuffle(pool(words, source, tag));
+  if (count > 0) list = list.slice(0, count);
+  return list.map((w) => ({
+    id: w.id,
+    dir: dir === "mixed" ? (Math.random() < 0.5 ? "en-bn" : "bn-en") : dir,
+    tries: 0,
+  }));
+}
+
+/* ---------- small pieces ---------- */
+
+function Segmented<T extends string | number>({ legend, value, onChange, options }: {
+  legend: string;
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string; disabled?: boolean }[];
+}) {
+  return (
+    <fieldset className="seg">
+      <legend>{legend}</legend>
+      <div>
+        {options.map((o) => (
+          <label key={String(o.value)} className={o.disabled ? "off" : ""}>
+            <input type="radio" name={legend} checked={value === o.value} disabled={o.disabled} onChange={() => onChange(o.value)} />
+            <span>{o.label}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function Prompt({ word, dir }: { word: Word; dir: Direction }) {
+  return (
+    <>
+      <p className="prompt" lang={promptLang(dir)}>{promptOf(word, dir)}</p>
+      {word.pos && dir === "en-bn" && <p className="muted pos-line">{word.pos}</p>}
+      {dir === "en-bn" && <SpeakButton text={word.english} />}
+    </>
+  );
+}
+
+function Example({ word }: { word: Word }) {
+  return word.example ? <p className="muted example">{word.example}</p> : null;
+}
+
+type CardProps = { word: Word; dir: Direction; onDone: (correct: boolean) => void };
+
+/* ---------- flashcards ---------- */
+
+function Flash({ word, dir, onDone }: CardProps) {
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const onControl = (e.target as HTMLElement).closest("button,input,textarea,select");
+      if (!shown) {
+        if ((e.key === " " || e.key === "Enter") && !onControl) { e.preventDefault(); setShown(true); }
+      } else {
+        if (e.key === "ArrowLeft" || e.key === "1") onDone(false);
+        if (e.key === "ArrowRight" || e.key === "2") onDone(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shown, onDone]);
+
+  return (
+    <>
+      <div className="card">
+        <Prompt word={word} dir={dir} />
+        {shown && (
+          <div className="answer">
+            <p lang={answerLang(dir)}>{answerOf(word, dir)}</p>
+            <Example word={word} />
+            {dir === "bn-en" && <SpeakButton text={word.english} />}
+          </div>
+        )}
+      </div>
+      <div className="actions">
+        {!shown ? (
+          <button className="btn primary" onClick={() => setShown(true)}>Show answer <kbd>Space</kbd></button>
+        ) : (
+          <>
+            <button className="btn bad" onClick={() => onDone(false)}>Missed it <kbd>←</kbd></button>
+            <button className="btn good" onClick={() => onDone(true)}>Got it <kbd>→</kbd></button>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ---------- multiple choice ---------- */
+
+function Choice({ word, dir, onDone }: CardProps) {
+  const { words } = useStore();
+  const answer = answerOf(word, dir);
+  const options = useMemo(() => {
+    const others = shuffle(words.filter((w) => w.id !== word.id && answerOf(w, dir) !== answer).map((w) => answerOf(w, dir)));
+    return shuffle([answer, ...Array.from(new Set(others)).slice(0, 3)]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [word.id, dir]);
+  const [picked, setPicked] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (picked === null) {
+        const n = parseInt(e.key, 10);
+        if (n >= 1 && n <= options.length) setPicked(options[n - 1]);
+      } else if ((e.key === "Enter" || e.key === " ") && !(e.target as HTMLElement).closest("button")) {
+        e.preventDefault();
+        onDone(picked === answer);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [picked, options, answer, onDone]);
+
+  return (
+    <>
+      <div className="card compact">
+        <Prompt word={word} dir={dir} />
+      </div>
+      <div className="options" role="group" aria-label="Choose the meaning">
+        {options.map((o, i) => {
+          const state = picked === null ? "" : o === answer ? "good" : o === picked ? "bad" : "dim";
+          return (
+            <button key={o} className={`opt ${state}`} lang={answerLang(dir)} disabled={picked !== null} onClick={() => setPicked(o)}>
+              <kbd>{i + 1}</kbd>
+              {o}
+            </button>
+          );
+        })}
+      </div>
+      {picked !== null && (
+        <>
+          <p className={`verdict ${picked === answer ? "good" : "bad"}`} role="status">
+            {picked === answer ? "Correct." : "Not quite."}
+          </p>
+          <Example word={word} />
+          <div className="actions">
+            <button className="btn primary" autoFocus onClick={() => onDone(picked === answer)}>Next <kbd>Enter</kbd></button>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+/* ---------- typing ---------- */
+
+function Type({ word, dir, onDone }: CardProps) {
+  const answer = answerOf(word, dir);
+  const [value, setValue] = useState("");
+  const [result, setResult] = useState<boolean | null>(null);
+  const [hint, setHint] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function check() {
+    if (!value.trim()) return;
+    setResult(acceptedAnswers(answer).includes(normalize(value)));
+  }
+
+  return (
+    <>
+      <div className="card compact">
+        <Prompt word={word} dir={dir} />
+      </div>
+      <div className="typebox">
+        <label htmlFor="typed">Type the {dir === "en-bn" ? "Bangla" : "English"} meaning</label>
+        <input
+          id="typed"
+          ref={inputRef}
+          autoFocus
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          lang={answerLang(dir)}
+          value={value}
+          readOnly={result !== null}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            if (result === null) check();
+            else onDone(result);
+          }}
+        />
+        {result === null && hint && <p className="muted">Starts with <b lang={answerLang(dir)}>{firstGrapheme(answer)}</b></p>}
+      </div>
+      {result === null ? (
+        <div className="actions">
+          <button className="btn primary" onClick={check} disabled={!value.trim()}>Check <kbd>Enter</kbd></button>
+          <button className="btn" onClick={() => setHint(true)} disabled={hint}>Hint</button>
+          <button className="btn ghost" onClick={() => setResult(false)}>I don’t know</button>
+        </div>
+      ) : (
+        <>
+          <p className={`verdict ${result ? "good" : "bad"}`} role="status">
+            {result ? "Correct." : <>Not quite. The answer is <b lang={answerLang(dir)}>{answer}</b></>}
+          </p>
+          <Example word={word} />
+          <div className="actions">
+            <button className="btn primary" onClick={() => onDone(result)}>Next <kbd>Enter</kbd></button>
+            {!result && value.trim() && (
+              <button className="btn" onClick={() => setResult(true)}>Count as correct</button>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+/* ---------- a session ---------- */
+
+function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mode; onExit: () => void; onAgain: () => void }) {
+  const { words, recordAnswer } = useStore();
+  const [queue, setQueue] = useState<Item[]>(initial);
+  const [idx, setIdx] = useState(0);
+  const [log, setLog] = useState<{ id: string; correct: boolean }[]>([]);
+  const byId = useMemo(() => new Map(words.map((w) => [w.id, w])), [words]);
+
+  const item = queue[idx];
+  const word = item ? byId.get(item.id) : undefined;
+  const finished = idx >= queue.length;
+
+  function onDone(correct: boolean) {
+    if (!item) return;
+    if (item.tries === 0) {
+      recordAnswer(item.id, correct);
+      setLog((l) => [...l, { id: item.id, correct }]);
+    }
+    if (!correct && item.tries < 2) setQueue((q) => [...q, { ...item, tries: item.tries + 1 }]);
+    setIdx((i) => i + 1);
+  }
+
+  if (finished || !word) {
+    const right = log.filter((l) => l.correct).length;
+    const missed = log.filter((l) => !l.correct).map((l) => byId.get(l.id)).filter((w): w is Word => !!w);
+    return (
+      <>
+        <h1>Session complete</h1>
+        <p className="lede">
+          {log.length === 0 ? "No answers this time." : `${right} of ${log.length} right on the first try.`}
+        </p>
+        {missed.length > 0 && (
+          <section className="block">
+            <h2>To look at again</h2>
+            <ul className="missed">
+              {missed.map((w) => (
+                <li key={w.id}>
+                  <span>{w.english}</span>
+                  <span lang="bn">{w.bangla}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        <div className="actions">
+          <button className="btn primary" onClick={onAgain}>Practice again</button>
+          <button className="btn" onClick={onExit}>Change settings</button>
+          <Link href="/" className="btn">Back to today</Link>
+        </div>
+      </>
+    );
+  }
+
+  const Card = mode === "flash" ? Flash : mode === "choice" ? Choice : Type;
+  return (
+    <>
+      <div className="session-head">
+        <button className="btn small ghost" onClick={onExit}>End session</button>
+        <span className="muted">{idx + 1} of {queue.length}</span>
+        {item.tries > 0 && <span className="chip">second look</span>}
+      </div>
+      <div className="meter thin" aria-hidden="true"><i style={{ width: `${(idx / queue.length) * 100}%` }} /></div>
+      <Card key={`${idx}-${item.id}`} word={word} dir={item.dir} onDone={onDone} />
+    </>
+  );
+}
+
+/* ---------- setup ---------- */
+
+export default function PracticePage() {
+  const { ready, words } = useStore();
+  const [mode, setMode] = useState<Mode>("flash");
+  const [dir, setDir] = useState<DirSetting>("en-bn");
+  const [source, setSource] = useState<Source>("due");
+  const [tag, setTag] = useState("");
+  const [count, setCount] = useState(20);
+  const [items, setItems] = useState<Item[] | null>(null);
+  const [run, setRun] = useState(0);
+  const touchedSource = useRef(false);
+
+  const now = Date.now();
+  const dueCount = ready ? words.filter((w) => isDue(w, now)).length : 0;
+  useEffect(() => {
+    if (ready && !touchedSource.current && dueCount === 0) setSource("all");
+  }, [ready, dueCount]);
+
+  if (!ready) return <p className="muted">Opening your notebook…</p>;
+
+  const tags = Array.from(new Set(words.flatMap((w) => w.tags))).sort();
+  const available = pool(words, source, tag).length;
+  const planned = count > 0 ? Math.min(count, available) : available;
+  const choiceOk = words.length >= 2;
+
+  function start() {
+    setItems(buildQueue(words, source, tag, count, dir));
+    setRun((r) => r + 1);
+  }
+
+  if (items) {
+    return <Session key={run} initial={items} mode={mode} onExit={() => setItems(null)} onAgain={start} />;
+  }
+
+  const note: ReactNode =
+    available === 0
+      ? source === "due" && !tag
+        ? "Nothing is due right now. Pick “All words” to practice anyway."
+        : "No words match these choices."
+      : `${planned} ${planned === 1 ? "word" : "words"} in this session.`;
+
+  return (
+    <>
+      <h1>Practice</h1>
+      <p className="lede">Choose how you want to practice, then start.</p>
+
+      <div className="setup">
+        <Segmented<Mode>
+          legend="Style"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: "flash", label: "Flashcards" },
+            { value: "choice", label: "Multiple choice", disabled: !choiceOk },
+            { value: "type", label: "Type the answer" },
+          ]}
+        />
+        <Segmented<DirSetting>
+          legend="Direction"
+          value={dir}
+          onChange={setDir}
+          options={[
+            { value: "en-bn", label: "English to Bangla" },
+            { value: "bn-en", label: "Bangla to English" },
+            { value: "mixed", label: "Mixed" },
+          ]}
+        />
+        <Segmented<Source>
+          legend="Words"
+          value={source}
+          onChange={(v) => { touchedSource.current = true; setSource(v); }}
+          options={[
+            { value: "due", label: `Due (${pool(words, "due", tag).length})` },
+            { value: "all", label: "All" },
+            { value: "new", label: "New" },
+            { value: "weak", label: "Needs work" },
+            { value: "starred", label: "Starred" },
+          ]}
+        />
+        <Segmented<number>
+          legend="Length"
+          value={count}
+          onChange={setCount}
+          options={[
+            { value: 10, label: "10" },
+            { value: 20, label: "20" },
+            { value: 50, label: "50" },
+            { value: 0, label: "All" },
+          ]}
+        />
+        {tags.length > 0 && (
+          <div className="field">
+            <label htmlFor="tag">Only words tagged</label>
+            <select id="tag" value={tag} onChange={(e) => setTag(e.target.value)}>
+              <option value="">Any tag</option>
+              {tags.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {mode === "type" && dir !== "bn-en" && (
+        <p className="muted">Typing Bangla answers works best with a Bangla keyboard such as Avro or Bijoy.</p>
+      )}
+
+      <p className="notice" role="status">{note}</p>
+      <div className="actions">
+        <button className="btn primary" onClick={start} disabled={available === 0}>Start</button>
+        {words.length === 0 && <Link href="/words" className="btn">Add words first</Link>}
+      </div>
+    </>
+  );
+}
