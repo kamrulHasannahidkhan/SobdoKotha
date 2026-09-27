@@ -286,6 +286,8 @@ dialog::backdrop { background: rgba(8, 12, 36, 0.6); }
 .answer { margin-top: 18px; padding-top: 14px; border-top: 2px dashed var(--line); animation: reveal 0.2s ease-out; }
 .answer > p:first-child { font-family: var(--display); font-size: clamp(30px, 5.5vw, 44px); line-height: 1.15; margin-bottom: 6px; }
 .example { margin: 6px 0 10px; font-size: 16px; }
+.cloze-sentence { font-family: var(--ui); font-size: clamp(20px, 3.5vw, 26px); line-height: 1.5; margin-top: 4px; }
+.cloze-gap { display: inline-block; min-width: 3em; padding: 0 4px; border-bottom: 2px solid var(--ink); font-weight: 600; text-align: center; }
 @keyframes reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
 .options { display: grid; gap: 10px; margin-bottom: 14px; }

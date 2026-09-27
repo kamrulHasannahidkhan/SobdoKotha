@@ -87,6 +87,33 @@ export function firstGrapheme(text: string) {
   return Array.from(t)[0] ?? "";
 }
 
+export type ClozeBlank = { before: string; after: string; answers: string[] };
+
+/**
+ * Finds the English target word (or an inflected form of it, e.g. "acquiesced"
+ * for "acquiesce") inside an example sentence, so it can be blanked out for a
+ * fill-in-the-blank exercise. Returns null when no example is set or the word
+ * can't be located in it.
+ */
+export function findClozeBlank(example: string, english: string): ClozeBlank | null {
+  const base = normalize(english);
+  if (!example || !base) return null;
+  const re = /[A-Za-z][A-Za-z'-]*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(example))) {
+    const token = m[0];
+    const tnorm = normalize(token);
+    if (tnorm.length >= 3 && (tnorm.startsWith(base) || base.startsWith(tnorm))) {
+      return {
+        before: example.slice(0, m.index),
+        after: example.slice(m.index + token.length),
+        answers: Array.from(new Set([tnorm, base])),
+      };
+    }
+  }
+  return null;
+}
+
 export function wordKey(english: string, bangla: string) {
   return `${normalize(english)}|${normalize(bangla)}`;
 }

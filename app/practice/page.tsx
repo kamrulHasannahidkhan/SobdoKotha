@@ -4,11 +4,11 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { isDue, isNew, isWeak } from "@/lib/srs";
-import { acceptedAnswers, firstGrapheme, normalize, shuffle } from "@/lib/utils";
+import { acceptedAnswers, findClozeBlank, firstGrapheme, normalize, shuffle } from "@/lib/utils";
 import { SpeakButton } from "@/components/SpeakButton";
 import type { Direction, Word } from "@/lib/types";
 
-type Mode = "flash" | "choice" | "type" | "game";
+type Mode = "flash" | "choice" | "type" | "cloze" | "game";
 type DirSetting = Direction | "mixed";
 type Source = "due" | "new" | "weak" | "starred" | "all";
 type Item = { id: string; dir: Direction; tries: number };
@@ -23,10 +23,11 @@ const GAME_POINTS_BASE = 10;
 const GAME_POINTS_PER_STREAK = 2;
 const pointsFor = (streakBefore: number) => GAME_POINTS_BASE + Math.min(streakBefore, GAME_STREAK_CAP) * GAME_POINTS_PER_STREAK;
 
-function pool(words: Word[], source: Source, tag: string) {
+function pool(words: Word[], source: Source, tag: string, clozeOnly = false) {
   const now = Date.now();
   return words.filter((w) => {
     if (tag && !w.tags.includes(tag)) return false;
+    if (clozeOnly && !findClozeBlank(w.example, w.english)) return false;
     switch (source) {
       case "due": return isDue(w, now);
       case "new": return isNew(w);
@@ -37,8 +38,8 @@ function pool(words: Word[], source: Source, tag: string) {
   });
 }
 
-function buildQueue(words: Word[], source: Source, tag: string, count: number, dir: DirSetting): Item[] {
-  let list = shuffle(pool(words, source, tag));
+function buildQueue(words: Word[], source: Source, tag: string, count: number, dir: DirSetting, clozeOnly = false): Item[] {
+  let list = shuffle(pool(words, source, tag, clozeOnly));
   if (count > 0) list = list.slice(0, count);
   return list.map((w) => ({
     id: w.id,
@@ -253,6 +254,93 @@ function Type({ word, dir, onDone }: CardProps) {
   );
 }
 
+/* ---------- fill in the blank ---------- */
+
+function Cloze({ word, onDone }: CardProps) {
+  const blank = useMemo(() => findClozeBlank(word.example, word.english), [word]);
+  const [value, setValue] = useState("");
+  const [result, setResult] = useState<boolean | null>(null);
+  const [hint, setHint] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function check() {
+    if (!value.trim() || !blank) return;
+    setResult(blank.answers.includes(normalize(value)));
+  }
+
+  if (!blank) {
+    return (
+      <>
+        <div className="card compact">
+          <p className="prompt" lang="bn">{word.bangla}</p>
+          <p className="muted pos-line">No usable example sentence for this word.</p>
+        </div>
+        <div className="actions">
+          <button className="btn primary" onClick={() => onDone(false)}>Skip <kbd>Enter</kbd></button>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="card compact">
+        <p className="muted pos-line">
+          {word.bangla}
+          {word.pos ? ` · ${word.pos}` : ""}
+        </p>
+        <p className="prompt cloze-sentence" lang="en">
+          {blank.before}
+          <span className="cloze-gap">{result === null ? "_____" : blank.answers.find((a) => a !== normalize(word.english)) ?? word.english}</span>
+          {blank.after}
+        </p>
+      </div>
+      <div className="typebox">
+        <label htmlFor="cloze-typed">Type the missing word</label>
+        <input
+          id="cloze-typed"
+          ref={inputRef}
+          autoFocus
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          lang="en"
+          value={value}
+          readOnly={result !== null}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            if (result === null) check();
+            else onDone(result);
+          }}
+        />
+        {result === null && hint && <p className="muted">Starts with <b lang="en">{firstGrapheme(word.english)}</b></p>}
+      </div>
+      {result === null ? (
+        <div className="actions">
+          <button className="btn primary" onClick={check} disabled={!value.trim()}>Check <kbd>Enter</kbd></button>
+          <button className="btn" onClick={() => setHint(true)} disabled={hint}>Hint</button>
+          <button className="btn ghost" onClick={() => setResult(false)}>I don’t know</button>
+        </div>
+      ) : (
+        <>
+          <p className={`verdict ${result ? "good" : "bad"}`} role="status">
+            {result ? "Correct." : <>Not quite. The word is <b lang="en">{word.english}</b></>}
+          </p>
+          <SpeakButton text={word.english} />
+          <div className="actions">
+            <button className="btn primary" onClick={() => onDone(result)}>Next <kbd>Enter</kbd></button>
+            {!result && value.trim() && (
+              <button className="btn" onClick={() => setResult(true)}>Count as correct</button>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 /* ---------- a session ---------- */
 
 function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mode; onExit: () => void; onAgain: () => void }) {
@@ -335,7 +423,7 @@ function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mo
     );
   }
 
-  const Card = mode === "flash" ? Flash : mode === "choice" ? Choice : Type;
+  const Card = mode === "flash" ? Flash : mode === "choice" ? Choice : mode === "cloze" ? Cloze : Type;
   return (
     <>
       <div className="session-head">
@@ -373,12 +461,13 @@ export default function PracticePage() {
   if (!ready) return <p className="muted">Opening your notebook…</p>;
 
   const tags = Array.from(new Set(words.flatMap((w) => w.tags))).sort();
-  const available = pool(words, source, tag).length;
+  const clozeOnly = mode === "cloze";
+  const available = pool(words, source, tag, clozeOnly).length;
   const planned = count > 0 ? Math.min(count, available) : available;
   const choiceOk = words.length >= 2;
 
   function start() {
-    setItems(buildQueue(words, source, tag, count, dir));
+    setItems(buildQueue(words, source, tag, count, dir, clozeOnly));
     setRun((r) => r + 1);
   }
 
@@ -407,6 +496,7 @@ export default function PracticePage() {
             { value: "flash", label: "Flashcards" },
             { value: "choice", label: "Multiple choice", disabled: !choiceOk },
             { value: "type", label: "Type the answer" },
+            { value: "cloze", label: "Fill in the blank" },
             { value: "game", label: "Game (score points)" },
           ]}
         />
@@ -459,6 +549,9 @@ export default function PracticePage() {
       )}
       {mode === "game" && (
         <p className="muted">Type the answer for each word. Correct answers score points, and a streak of correct answers earns a bonus.</p>
+      )}
+      {mode === "cloze" && (
+        <p className="muted">You'll see each word's example sentence with the word blanked out — type the missing word. Direction doesn't apply here; only words with a usable example sentence are included.</p>
       )}
 
       <p className="notice" role="status">{note}</p>
