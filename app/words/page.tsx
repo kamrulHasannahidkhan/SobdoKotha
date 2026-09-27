@@ -96,7 +96,7 @@ function fromJSON(data: unknown): ImportItem[] {
 }
 
 export default function WordsPage() {
-  const { ready, words, addWord, updateWord, deleteWord, toggleStar, importWords, loadStarter, resetProgress, clearAll } = useStore();
+  const { ready, words, addWord, updateWord, deleteWord, toggleStar, importWords, loadStarter, loadGre500, resetProgress, clearAll } = useStore();
   const [q, setQ] = useState("");
   const [tag, setTag] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -135,7 +135,7 @@ export default function WordsPage() {
   function onAdd(v: WordInput) {
     if (exists(v.english, v.bangla)) return "This word and meaning are already in your list.";
     addWord(v);
-    setNotice(`Added “${v.english.trim()}”.`);
+    setNotice(`Added "${v.english.trim()}".`);
     return null;
   }
 
@@ -143,7 +143,7 @@ export default function WordsPage() {
     if (!editing) return null;
     if (exists(v.english, v.bangla, editing.id)) return "Another entry already has this word and meaning.";
     updateWord(editing.id, v);
-    setNotice(`Saved “${v.english.trim()}”.`);
+    setNotice(`Saved "${v.english.trim()}".`);
     return null;
   }
 
@@ -186,7 +186,7 @@ export default function WordsPage() {
         <WordForm submitLabel="Add word" onSubmit={onAdd} />
         <details className="bulk">
           <summary>Paste many words at once</summary>
-          <p className="muted">One pair per line: <code>brave - সাহসী</code>. You can also separate with a tab or “=”.</p>
+          <p className="muted">One pair per line: <code>brave - সাহসী</code>. You can also separate with a tab or "=".</p>
           <textarea value={bulk} onChange={(e) => setBulk(e.target.value)} rows={5} aria-label="Words to add, one per line" />
           <div className="actions">
             <button type="button" className="btn" onClick={onBulk}>Add all</button>
@@ -233,9 +233,11 @@ export default function WordsPage() {
 
         {words.length === 0 ? (
           <div className="empty">
-            <p>No words yet. Add one above, or start with 40 common words.</p>
-            <button className="btn primary" onClick={() => setNotice(`Added ${loadStarter()} starter words.`)}>Load starter words</button>
-            <button className="btn" onClick={() => setNotice(`Added ${loadGre500()} advanced words.`)}>Load 500 advanced words</button>
+            <p>No words yet. Add one above, or start with a ready-made list.</p>
+            <div className="actions">
+              <button className="btn primary" onClick={() => setNotice(`Added ${loadStarter()} starter words.`)}>Load 40 starter words</button>
+              <button className="btn" onClick={() => setNotice(`Added ${loadGre500()} advanced words.`)}>Load 500 advanced words</button>
+            </div>
           </div>
         ) : shown.length === 0 ? (
           <p className="empty">No words match these filters.</p>
@@ -265,7 +267,7 @@ export default function WordsPage() {
                   <button className="btn small" onClick={() => setEditing(w)} aria-label={`Edit ${w.english}`}>Edit</button>
                   <button
                     className="btn small danger"
-                    onClick={() => { if (confirm(`Delete “${w.english}”?`)) { deleteWord(w.id); setNotice(`Deleted “${w.english}”.`); } }}
+                    onClick={() => { if (confirm(`Delete "${w.english}"?`)) { deleteWord(w.id); setNotice(`Deleted "${w.english}".`); } }}
                     aria-label={`Delete ${w.english}`}
                   >
                     Delete
@@ -290,6 +292,7 @@ export default function WordsPage() {
           <button className="btn" onClick={() => download(`shobdo-khata-${stamp}.csv`, toCSV(words), "text/csv;charset=utf-8")}>Export CSV</button>
           <button className="btn" onClick={() => fileRef.current?.click()}>Import file</button>
           <input ref={fileRef} type="file" accept=".csv,.json,text/csv,application/json" hidden onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+          <button className="btn" onClick={() => setNotice(`Added ${loadGre500()} advanced words.`)}>Add 500 advanced words</button>
         </div>
         <div className="actions">
           <button className="btn danger" onClick={() => { if (confirm("Reset levels, scores and streak for every word? Your words stay.")) { resetProgress(); setNotice("Progress reset."); } }}>Reset progress</button>
