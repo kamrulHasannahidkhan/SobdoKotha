@@ -31,3 +31,13 @@ export type Stats = {
   history: Record<string, number>;
   dailyGoal: number;
 };
+
+/** One completed run of the scored Bangla-to-English test. */
+export type GameResult = {
+  id: string;
+  date: number;
+  total: number;
+  correct: number;
+  points: number;
+  bestStreak: number;
+};

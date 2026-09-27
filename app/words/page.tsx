@@ -235,6 +235,7 @@ export default function WordsPage() {
           <div className="empty">
             <p>No words yet. Add one above, or start with 40 common words.</p>
             <button className="btn primary" onClick={() => setNotice(`Added ${loadStarter()} starter words.`)}>Load starter words</button>
+            <button className="btn" onClick={() => setNotice(`Added ${loadGre500()} advanced words.`)}>Load 500 advanced words</button>
           </div>
         ) : shown.length === 0 ? (
           <p className="empty">No words match these filters.</p>
