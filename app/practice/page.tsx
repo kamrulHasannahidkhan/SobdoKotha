@@ -8,7 +8,7 @@ import { acceptedAnswers, firstGrapheme, normalize, shuffle } from "@/lib/utils"
 import { SpeakButton } from "@/components/SpeakButton";
 import type { Direction, Word } from "@/lib/types";
 
-type Mode = "flash" | "choice" | "type";
+type Mode = "flash" | "choice" | "type" | "game";
 type DirSetting = Direction | "mixed";
 type Source = "due" | "new" | "weak" | "starred" | "all";
 type Item = { id: string; dir: Direction; tries: number };
@@ -17,6 +17,11 @@ const promptOf = (w: Word, d: Direction) => (d === "en-bn" ? w.english : w.bangl
 const answerOf = (w: Word, d: Direction) => (d === "en-bn" ? w.bangla : w.english);
 const promptLang = (d: Direction) => (d === "en-bn" ? "en" : "bn");
 const answerLang = (d: Direction) => (d === "en-bn" ? "bn" : "en");
+
+const GAME_STREAK_CAP = 5;
+const GAME_POINTS_BASE = 10;
+const GAME_POINTS_PER_STREAK = 2;
+const pointsFor = (streakBefore: number) => GAME_POINTS_BASE + Math.min(streakBefore, GAME_STREAK_CAP) * GAME_POINTS_PER_STREAK;
 
 function pool(words: Word[], source: Source, tag: string) {
   const now = Date.now();
@@ -251,21 +256,35 @@ function Type({ word, dir, onDone }: CardProps) {
 /* ---------- a session ---------- */
 
 function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mode; onExit: () => void; onAgain: () => void }) {
-  const { words, recordAnswer } = useStore();
+  const { words, recordAnswer, recordGameResult, gameResults } = useStore();
   const [queue, setQueue] = useState<Item[]>(initial);
   const [idx, setIdx] = useState(0);
   const [log, setLog] = useState<{ id: string; correct: boolean }[]>([]);
+  const [points, setPoints] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const bestStreakRef = useRef(0);
+  const recordedRef = useRef(false);
   const byId = useMemo(() => new Map(words.map((w) => [w.id, w])), [words]);
 
   const item = queue[idx];
   const word = item ? byId.get(item.id) : undefined;
   const finished = idx >= queue.length;
+  const isGame = mode === "game";
 
   function onDone(correct: boolean) {
     if (!item) return;
     if (item.tries === 0) {
       recordAnswer(item.id, correct);
       setLog((l) => [...l, { id: item.id, correct }]);
+      if (isGame) {
+        const gained = correct ? pointsFor(streak) : 0;
+        setPoints((p) => p + gained);
+        setStreak((s) => {
+          const next = correct ? s + 1 : 0;
+          bestStreakRef.current = Math.max(bestStreakRef.current, next);
+          return next;
+        });
+      }
     }
     if (!correct && item.tries < 2) setQueue((q) => [...q, { ...item, tries: item.tries + 1 }]);
     setIdx((i) => i + 1);
@@ -274,11 +293,25 @@ function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mo
   if (finished || !word) {
     const right = log.filter((l) => l.correct).length;
     const missed = log.filter((l) => !l.correct).map((l) => byId.get(l.id)).filter((w): w is Word => !!w);
+
+    if (isGame && log.length > 0 && !recordedRef.current) {
+      recordedRef.current = true;
+      recordGameResult({ total: log.length, correct: right, points, bestStreak: bestStreakRef.current });
+    }
+    const previousBest = isGame
+      ? gameResults.filter((r) => r.total === log.length).reduce<number>((m, r) => Math.max(m, r.points), 0)
+      : 0;
+    const isNewBest = isGame && log.length > 0 && points >= previousBest;
+
     return (
       <>
-        <h1>Session complete</h1>
+        <h1>{isGame ? "Test complete" : "Session complete"}</h1>
         <p className="lede">
-          {log.length === 0 ? "No answers this time." : `${right} of ${log.length} right on the first try.`}
+          {log.length === 0
+            ? "No answers this time."
+            : isGame
+              ? <>{right} of {log.length} correct — {points} points{isNewBest && <span className="chip"> New best</span>}</>
+              : `${right} of ${log.length} right on the first try.`}
         </p>
         {missed.length > 0 && (
           <section className="block">
@@ -294,7 +327,7 @@ function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mo
           </section>
         )}
         <div className="actions">
-          <button className="btn primary" onClick={onAgain}>Practice again</button>
+          <button className="btn primary" onClick={onAgain}>{isGame ? "Play again" : "Practice again"}</button>
           <button className="btn" onClick={onExit}>Change settings</button>
           <Link href="/" className="btn">Back to today</Link>
         </div>
@@ -308,6 +341,8 @@ function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mo
       <div className="session-head">
         <button className="btn small ghost" onClick={onExit}>End session</button>
         <span className="muted">{idx + 1} of {queue.length}</span>
+        {isGame && <span className="chip">{points} pts</span>}
+        {isGame && streak > 1 && <span className="chip">Streak {streak}</span>}
         {item.tries > 0 && <span className="chip">second look</span>}
       </div>
       <div className="meter thin" aria-hidden="true"><i style={{ width: `${(idx / queue.length) * 100}%` }} /></div>
@@ -372,6 +407,7 @@ export default function PracticePage() {
             { value: "flash", label: "Flashcards" },
             { value: "choice", label: "Multiple choice", disabled: !choiceOk },
             { value: "type", label: "Type the answer" },
+            { value: "game", label: "Game (score points)" },
           ]}
         />
         <Segmented<DirSetting>
@@ -418,8 +454,11 @@ export default function PracticePage() {
         )}
       </div>
 
-      {mode === "type" && dir !== "bn-en" && (
+      {(mode === "type" || mode === "game") && dir !== "bn-en" && (
         <p className="muted">Typing Bangla answers works best with a Bangla keyboard such as Avro or Bijoy.</p>
+      )}
+      {mode === "game" && (
+        <p className="muted">Type the answer for each word. Correct answers score points, and a streak of correct answers earns a bonus.</p>
       )}
 
       <p className="notice" role="status">{note}</p>
