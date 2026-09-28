@@ -5,6 +5,7 @@ import { useStore } from "@/lib/store";
 import { WordForm } from "@/components/WordForm";
 import { SpeakButton } from "@/components/SpeakButton";
 import { isDue, isMastered, isNew, isWeak, MAX_BOX } from "@/lib/srs";
+import { BUILTIN_DECKS, DECKS, deckOf, type DeckId } from "@/lib/decks";
 import { download, parseCSV, parseTags, toCSV, wordKey, normalize } from "@/lib/utils";
 import type { ImportItem, Word, WordInput } from "@/lib/types";
 
@@ -89,6 +90,7 @@ function fromJSON(data: unknown): ImportItem[] {
       pos: typeof o.pos === "string" ? o.pos : "",
       example: typeof o.example === "string" ? o.example : "",
       tags: Array.isArray(o.tags) ? o.tags.filter((t): t is string => typeof t === "string") : typeof o.tags === "string" ? parseTags(o.tags) : [],
+      deck: typeof o.deck === "string" ? o.deck : undefined,
       box: num(o.box), due: num(o.due), correct: num(o.correct), wrong: num(o.wrong),
       starred: o.starred === true,
     }];
@@ -96,7 +98,8 @@ function fromJSON(data: unknown): ImportItem[] {
 }
 
 export default function WordsPage() {
-  const { ready, words, addWord, updateWord, deleteWord, toggleStar, importWords, loadStarter, loadGre500, resetProgress, clearAll } = useStore();
+  const { ready, words, addWord, updateWord, deleteWord, toggleStar, importWords, restoreDeck, resetProgress, clearDeck } = useStore();
+  const [deck, setDeck] = useState<string>("gre-iba");
   const [q, setQ] = useState("");
   const [tag, setTag] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -107,12 +110,19 @@ export default function WordsPage() {
   const [notice, setNotice] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const allTags = useMemo(() => Array.from(new Set(words.flatMap((w) => w.tags))).sort(), [words]);
+  const deckInfo = DECKS.find((d) => d.id === deck) ?? DECKS[0];
+  const deckWords = useMemo(() => words.filter((w) => deckOf(w) === deck), [words, deck]);
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const w of words) c[deckOf(w)] = (c[deckOf(w)] ?? 0) + 1;
+    return c;
+  }, [words]);
+  const allTags = useMemo(() => Array.from(new Set(deckWords.flatMap((w) => w.tags))).sort(), [deckWords]);
 
   const shown = useMemo(() => {
     const needle = normalize(q);
     const now = Date.now();
-    const list = words.filter((w) => {
+    const list = deckWords.filter((w) => {
       if (tag && !w.tags.includes(tag)) return false;
       if (filter === "starred" && !w.starred) return false;
       if (filter === "due" && !isDue(w, now)) return false;
@@ -125,23 +135,34 @@ export default function WordsPage() {
     if (sort === "az") list.sort((a, b) => a.english.localeCompare(b.english));
     if (sort === "weakest") list.sort((a, b) => a.box - b.box || b.wrong - a.wrong);
     return list;
-  }, [words, q, tag, filter, sort]);
+  }, [deckWords, q, tag, filter, sort]);
 
   if (!ready) return <p className="muted">Opening your notebook…</p>;
 
+  const builtinCount = BUILTIN_DECKS[deck as DeckId]?.length ?? 0;
+
   const exists = (english: string, bangla: string, ignoreId?: string) =>
-    words.some((w) => w.id !== ignoreId && wordKey(w.english, w.bangla) === wordKey(english, bangla));
+    deckWords.some((w) => w.id !== ignoreId && wordKey(w.english, w.bangla) === wordKey(english, bangla));
+
+  function switchDeck(id: string) {
+    setDeck(id);
+    setQ("");
+    setTag("");
+    setFilter("all");
+    setLimit(PAGE);
+    setNotice("");
+  }
 
   function onAdd(v: WordInput) {
-    if (exists(v.english, v.bangla)) return "This word and meaning are already in your list.";
-    addWord(v);
-    setNotice(`Added "${v.english.trim()}".`);
+    if (exists(v.english, v.bangla)) return "This word and meaning are already in this list.";
+    addWord(v, deck);
+    setNotice(`Added "${v.english.trim()}" to ${deckInfo.label}.`);
     return null;
   }
 
   function onSaveEdit(v: WordInput) {
     if (!editing) return null;
-    if (exists(v.english, v.bangla, editing.id)) return "Another entry already has this word and meaning.";
+    if (exists(v.english, v.bangla, editing.id)) return "Another entry in this list already has this word and meaning.";
     updateWord(editing.id, v);
     setNotice(`Saved "${v.english.trim()}".`);
     return null;
@@ -153,8 +174,8 @@ export default function WordsPage() {
       setNotice("Nothing to add. Write one pair per line, like: brave - সাহসী");
       return;
     }
-    const { added, skipped } = importWords(items);
-    setNotice(`Added ${added} ${added === 1 ? "word" : "words"}${skipped ? `, skipped ${skipped} duplicate or incomplete` : ""}.`);
+    const { added, skipped } = importWords(items, deck);
+    setNotice(`Added ${added} ${added === 1 ? "word" : "words"} to ${deckInfo.label}${skipped ? `, skipped ${skipped} duplicate or incomplete` : ""}.`);
     if (added) setBulk("");
   }
 
@@ -166,7 +187,7 @@ export default function WordsPage() {
         setNotice("No words found in that file. Use a CSV (english, bangla, pos, example, tags) or a JSON backup.");
         return;
       }
-      const { added, skipped } = importWords(items);
+      const { added, skipped } = importWords(items, deck);
       setNotice(`Imported ${added} ${added === 1 ? "word" : "words"}${skipped ? `, skipped ${skipped} duplicate or incomplete` : ""}.`);
     } catch {
       setNotice("That file could not be read. Check that it is valid CSV or JSON.");
@@ -179,126 +200,158 @@ export default function WordsPage() {
   return (
     <>
       <h1>Words</h1>
-      <p className="lede">{words.length} {words.length === 1 ? "word" : "words"} in your notebook.</p>
 
-      <section className="panel" aria-labelledby="add-h">
-        <h2 id="add-h">Add a word</h2>
-        <WordForm submitLabel="Add word" onSubmit={onAdd} />
-        <details className="bulk">
-          <summary>Paste many words at once</summary>
-          <p className="muted">One pair per line: <code>brave - সাহসী</code>. You can also separate with a tab or "=".</p>
-          <textarea value={bulk} onChange={(e) => setBulk(e.target.value)} rows={5} aria-label="Words to add, one per line" />
-          <div className="actions">
-            <button type="button" className="btn" onClick={onBulk}>Add all</button>
-          </div>
-        </details>
-      </section>
+      <div className="decktabs" role="tablist" aria-label="Word lists">
+        {DECKS.map((d) => (
+          <button
+            key={d.id}
+            id={`tab-${d.id}`}
+            type="button"
+            role="tab"
+            className="decktab"
+            aria-selected={deck === d.id}
+            aria-controls="deck-panel"
+            onClick={() => switchDeck(d.id)}
+          >
+            {d.label}
+            <span className="count">{counts[d.id] ?? 0}</span>
+          </button>
+        ))}
+      </div>
 
-      <p className="notice" role="status" aria-live="polite">{notice}</p>
+      <div id="deck-panel" role="tabpanel" aria-labelledby={`tab-${deck}`}>
+        <p className="lede">
+          {deckWords.length} {deckWords.length === 1 ? "word" : "words"} in {deckInfo.label}.
+        </p>
 
-      <section aria-labelledby="list-h">
-        <h2 id="list-h">Your list</h2>
-        <div className="toolbar">
-          <div className="field grow">
-            <label htmlFor="q">Search</label>
-            <input id="q" type="search" value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} placeholder="English or Bangla" />
-          </div>
-          <div className="field">
-            <label htmlFor="f">Show</label>
-            <select id="f" value={filter} onChange={(e) => { setFilter(e.target.value as Filter); setLimit(PAGE); }}>
-              <option value="all">All words</option>
-              <option value="starred">Starred</option>
-              <option value="due">Due for review</option>
-              <option value="weak">Needs work</option>
-              <option value="new">Not practiced yet</option>
-              <option value="mastered">Mastered</option>
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="t">Tag</label>
-            <select id="t" value={tag} onChange={(e) => { setTag(e.target.value); setLimit(PAGE); }}>
-              <option value="">Any tag</option>
-              {allTags.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="s">Sort</label>
-            <select id="s" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
-              <option value="newest">Newest first</option>
-              <option value="az">A to Z</option>
-              <option value="weakest">Weakest first</option>
-            </select>
-          </div>
-        </div>
-
-        {words.length === 0 ? (
-          <div className="empty">
-            <p>No words yet. Add one above, or start with a ready-made list.</p>
+        <section className="panel" aria-labelledby="add-h">
+          <h2 id="add-h">Add a word to {deckInfo.label}</h2>
+          <WordForm submitLabel="Add word" onSubmit={onAdd} />
+          <details className="bulk">
+            <summary>Paste many words at once</summary>
+            <p className="muted">One pair per line: <code>brave - সাহসী</code>. You can also separate with a tab or "=".</p>
+            <textarea value={bulk} onChange={(e) => setBulk(e.target.value)} rows={5} aria-label="Words to add, one per line" />
             <div className="actions">
-              <button className="btn primary" onClick={() => setNotice(`Added ${loadStarter()} starter words.`)}>Load 40 starter words</button>
-              <button className="btn" onClick={() => setNotice(`Added ${loadGre500()} advanced words.`)}>Load 500 advanced words</button>
+              <button type="button" className="btn" onClick={onBulk}>Add all</button>
+            </div>
+          </details>
+        </section>
+
+        <p className="notice" role="status" aria-live="polite">{notice}</p>
+
+        <section aria-labelledby="list-h">
+          <h2 id="list-h">Your list</h2>
+          <div className="toolbar">
+            <div className="field grow">
+              <label htmlFor="q">Search</label>
+              <input id="q" type="search" value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} placeholder="English or Bangla" />
+            </div>
+            <div className="field">
+              <label htmlFor="f">Show</label>
+              <select id="f" value={filter} onChange={(e) => { setFilter(e.target.value as Filter); setLimit(PAGE); }}>
+                <option value="all">All words</option>
+                <option value="starred">Starred</option>
+                <option value="due">Due for review</option>
+                <option value="weak">Needs work</option>
+                <option value="new">Not practiced yet</option>
+                <option value="mastered">Mastered</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="t">Tag</label>
+              <select id="t" value={tag} onChange={(e) => { setTag(e.target.value); setLimit(PAGE); }}>
+                <option value="">Any tag</option>
+                {allTags.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="s">Sort</label>
+              <select id="s" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+                <option value="newest">Original order</option>
+                <option value="az">A to Z</option>
+                <option value="weakest">Weakest first</option>
+              </select>
             </div>
           </div>
-        ) : shown.length === 0 ? (
-          <p className="empty">No words match these filters.</p>
-        ) : (
-          <ul className="wordlist">
-            {shown.slice(0, limit).map((w) => (
-              <li key={w.id}>
-                <div className="w-main">
-                  <span className="w-en">{w.english}</span>
-                  {w.pos && <span className="pos">{w.pos}</span>}
-                  <SpeakButton text={w.english} label="Hear" />
-                </div>
-                <div className="w-bn" lang="bn">{w.bangla}</div>
-                <div className="w-meta">
-                  {w.example && <p className="muted ex">{w.example}</p>}
-                  <p className="chips">
-                    <span className="pips" role="img" aria-label={`Level ${w.box} of ${MAX_BOX}`}>
-                      {Array.from({ length: MAX_BOX }, (_, i) => <i key={i} className={i < w.box ? "on" : ""} />)}
-                    </span>
-                    {w.tags.map((t) => <span key={t} className="chip">{t}</span>)}
-                  </p>
-                </div>
-                <div className="w-actions">
-                  <button className="btn small ghost" onClick={() => toggleStar(w.id)} aria-pressed={w.starred} aria-label={w.starred ? `Unstar ${w.english}` : `Star ${w.english}`}>
-                    {w.starred ? "★ Starred" : "☆ Star"}
-                  </button>
-                  <button className="btn small" onClick={() => setEditing(w)} aria-label={`Edit ${w.english}`}>Edit</button>
-                  <button
-                    className="btn small danger"
-                    onClick={() => { if (confirm(`Delete "${w.english}"?`)) { deleteWord(w.id); setNotice(`Deleted "${w.english}".`); } }}
-                    aria-label={`Delete ${w.english}`}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        {shown.length > limit && (
-          <div className="actions">
-            <button className="btn" onClick={() => setLimit((l) => l + PAGE)}>Show more ({shown.length - limit} left)</button>
-          </div>
-        )}
-      </section>
 
-      <section className="block" aria-labelledby="data-h">
-        <h2 id="data-h">Backup and import</h2>
-        <p className="muted">Your words are saved in this browser only. Export a backup now and then.</p>
-        <div className="actions">
-          <button className="btn" onClick={() => download(`shobdo-khata-${stamp}.json`, JSON.stringify({ words }, null, 2), "application/json")}>Export backup (JSON)</button>
-          <button className="btn" onClick={() => download(`shobdo-khata-${stamp}.csv`, toCSV(words), "text/csv;charset=utf-8")}>Export CSV</button>
-          <button className="btn" onClick={() => fileRef.current?.click()}>Import file</button>
-          <input ref={fileRef} type="file" accept=".csv,.json,text/csv,application/json" hidden onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
-          <button className="btn" onClick={() => setNotice(`Added ${loadGre500()} advanced words.`)}>Add 500 advanced words</button>
-        </div>
-        <div className="actions">
-          <button className="btn danger" onClick={() => { if (confirm("Reset levels, scores and streak for every word? Your words stay.")) { resetProgress(); setNotice("Progress reset."); } }}>Reset progress</button>
-          <button className="btn danger" onClick={() => { if (confirm("Delete ALL words? Export a backup first if you might need them.")) { clearAll(); setNotice("All words deleted."); } }}>Delete all words</button>
-        </div>
-      </section>
+          {deckWords.length === 0 ? (
+            <div className="empty">
+              {builtinCount > 0 ? (
+                <>
+                  <p>This list is empty.</p>
+                  <div className="actions">
+                    <button className="btn primary" onClick={() => setNotice(`Restored ${restoreDeck(deck)} words.`)}>Restore {deckInfo.label} list</button>
+                  </div>
+                </>
+              ) : deck === "words-1000" ? (
+                <p>No words here yet. Add words above, or use “Paste many words at once”.</p>
+              ) : (
+                <p>No words yet. Words you add yourself are kept here.</p>
+              )}
+            </div>
+          ) : shown.length === 0 ? (
+            <p className="empty">No words match these filters.</p>
+          ) : (
+            <ul className="wordlist">
+              {shown.slice(0, limit).map((w) => (
+                <li key={w.id}>
+                  <div className="w-main">
+                    <span className="w-en">{w.english}</span>
+                    {w.pos && <span className="pos">{w.pos}</span>}
+                    <SpeakButton text={w.english} label="Hear" />
+                  </div>
+                  <div className="w-bn" lang="bn">{w.bangla}</div>
+                  <div className="w-meta">
+                    {w.example && <p className="muted ex">{w.example}</p>}
+                    <p className="chips">
+                      <span className="pips" role="img" aria-label={`Level ${w.box} of ${MAX_BOX}`}>
+                        {Array.from({ length: MAX_BOX }, (_, i) => <i key={i} className={i < w.box ? "on" : ""} />)}
+                      </span>
+                      {w.tags.map((t) => <span key={t} className="chip">{t}</span>)}
+                    </p>
+                  </div>
+                  <div className="w-actions">
+                    <button className="btn small ghost" onClick={() => toggleStar(w.id)} aria-pressed={w.starred} aria-label={w.starred ? `Unstar ${w.english}` : `Star ${w.english}`}>
+                      {w.starred ? "★ Starred" : "☆ Star"}
+                    </button>
+                    <button className="btn small" onClick={() => setEditing(w)} aria-label={`Edit ${w.english}`}>Edit</button>
+                    <button
+                      className="btn small danger"
+                      onClick={() => { if (confirm(`Delete "${w.english}"?`)) { deleteWord(w.id); setNotice(`Deleted "${w.english}".`); } }}
+                      aria-label={`Delete ${w.english}`}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {shown.length > limit && (
+            <div className="actions">
+              <button className="btn" onClick={() => setLimit((l) => l + PAGE)}>Show more ({shown.length - limit} left)</button>
+            </div>
+          )}
+        </section>
+
+        <section className="block" aria-labelledby="data-h">
+          <h2 id="data-h">Backup and import</h2>
+          <p className="muted">Your words are saved in this browser only. Export a backup now and then.</p>
+          <div className="actions">
+            <button className="btn" onClick={() => download(`shobdo-khata-${stamp}.json`, JSON.stringify({ words }, null, 2), "application/json")}>Export backup (all lists, JSON)</button>
+            <button className="btn" onClick={() => download(`shobdo-khata-${deck}-${stamp}.csv`, toCSV(deckWords), "text/csv;charset=utf-8")}>Export CSV ({deckInfo.label})</button>
+            <button className="btn" onClick={() => fileRef.current?.click()}>Import file into {deckInfo.label}</button>
+            <input ref={fileRef} type="file" accept=".csv,.json,text/csv,application/json" hidden onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+            {builtinCount > 0 && (
+              <button className="btn" onClick={() => setNotice(`Restored ${restoreDeck(deck)} missing words.`)}>Restore {deckInfo.label} list</button>
+            )}
+          </div>
+          <div className="actions">
+            <button className="btn danger" onClick={() => { if (confirm("Reset levels, scores and streak for every word in every list? Your words stay.")) { resetProgress(); setNotice("Progress reset."); } }}>Reset progress (all lists)</button>
+            <button className="btn danger" onClick={() => { if (confirm(`Delete ALL words in ${deckInfo.label}? Export a backup first if you might need them.`)) { clearDeck(deck); setNotice(`All words in ${deckInfo.label} deleted.`); } }}>Delete all words in {deckInfo.label}</button>
+          </div>
+        </section>
+      </div>
 
       <EditDialog word={editing} onClose={() => setEditing(null)} onSave={onSaveEdit} />
     </>

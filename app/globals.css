@@ -341,3 +341,25 @@ dialog::backdrop { background: rgba(8, 12, 36, 0.6); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- word list tabs ---------- */
+
+.decktabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 22px; border-bottom: 2px solid var(--ink); }
+.decktab {
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1.5px solid transparent;
+  border-bottom: 0;
+  border-radius: 4px 4px 0 0;
+  padding: 8px 16px;
+  margin-bottom: -2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.decktab:hover { color: var(--ink); }
+.decktab[aria-selected="true"] { color: var(--ink); background: var(--surface); border-color: var(--ink); border-bottom: 2px solid var(--surface); }
+.decktab .count { font-size: 12.5px; font-weight: 500; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-2); }

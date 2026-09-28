@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { isDue, isNew, isWeak } from "@/lib/srs";
+import { DECKS, deckOf } from "@/lib/decks";
 import { acceptedAnswers, findClozeBlank, firstGrapheme, normalize, shuffle } from "@/lib/utils";
 import { SpeakButton } from "@/components/SpeakButton";
 import type { Direction, Word } from "@/lib/types";
@@ -443,6 +444,7 @@ function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mo
 
 export default function PracticePage() {
   const { ready, words } = useStore();
+  const [deck, setDeck] = useState<string>("all");
   const [mode, setMode] = useState<Mode>("flash");
   const [dir, setDir] = useState<DirSetting>("en-bn");
   const [source, setSource] = useState<Source>("due");
@@ -452,22 +454,23 @@ export default function PracticePage() {
   const [run, setRun] = useState(0);
   const touchedSource = useRef(false);
 
+  const deckWords = deck === "all" ? words : words.filter((w) => deckOf(w) === deck);
   const now = Date.now();
-  const dueCount = ready ? words.filter((w) => isDue(w, now)).length : 0;
+  const dueCount = ready ? deckWords.filter((w) => isDue(w, now)).length : 0;
   useEffect(() => {
     if (ready && !touchedSource.current && dueCount === 0) setSource("all");
   }, [ready, dueCount]);
 
   if (!ready) return <p className="muted">Opening your notebook…</p>;
 
-  const tags = Array.from(new Set(words.flatMap((w) => w.tags))).sort();
+  const tags = Array.from(new Set(deckWords.flatMap((w) => w.tags))).sort();
   const clozeOnly = mode === "cloze";
-  const available = pool(words, source, tag, clozeOnly).length;
+  const available = pool(deckWords, source, tag, clozeOnly).length;
   const planned = count > 0 ? Math.min(count, available) : available;
   const choiceOk = words.length >= 2;
 
   function start() {
-    setItems(buildQueue(words, source, tag, count, dir, clozeOnly));
+    setItems(buildQueue(deckWords, source, tag, count, dir, clozeOnly));
     setRun((r) => r + 1);
   }
 
@@ -488,6 +491,18 @@ export default function PracticePage() {
       <p className="lede">Choose how you want to practice, then start.</p>
 
       <div className="setup">
+        <Segmented<string>
+          legend="Word list"
+          value={deck}
+          onChange={setDeck}
+          options={[
+            { value: "all", label: `All (${words.length})` },
+            ...DECKS.map((d) => {
+              const n = words.filter((w) => deckOf(w) === d.id).length;
+              return { value: d.id as string, label: `${d.label} (${n})`, disabled: n === 0 };
+            }),
+          ]}
+        />
         <Segmented<Mode>
           legend="Style"
           value={mode}
@@ -515,7 +530,7 @@ export default function PracticePage() {
           value={source}
           onChange={(v) => { touchedSource.current = true; setSource(v); }}
           options={[
-            { value: "due", label: `Due (${pool(words, "due", tag).length})` },
+            { value: "due", label: `Due (${pool(deckWords, "due", tag).length})` },
             { value: "all", label: "All" },
             { value: "new", label: "New" },
             { value: "weak", label: "Needs work" },

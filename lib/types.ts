@@ -7,6 +7,8 @@ export type Word = {
   pos: string;
   example: string;
   tags: string[];
+  /** Which list the word lives in: "gre-iba", "words-1000" or "mine" */
+  deck?: string;
   /** Leitner box, 0 (new / missed) to 5 (long interval) */
   box: number;
   /** Timestamp (ms) when the word is next due for review */
@@ -20,7 +22,7 @@ export type Word = {
 export type WordInput = Pick<Word, "english" | "bangla" | "pos" | "example" | "tags">;
 
 export type ImportItem = WordInput &
-  Partial<Pick<Word, "box" | "due" | "correct" | "wrong" | "starred">>;
+  Partial<Pick<Word, "box" | "due" | "correct" | "wrong" | "starred" | "deck">>;
 
 export type Stats = {
   streak: number;

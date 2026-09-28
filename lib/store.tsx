@@ -10,36 +10,37 @@ import {
 } from "react";
 import type { GameResult, ImportItem, Stats, Word, WordInput } from "./types";
 import { grade } from "./srs";
-import { seedWords } from "./seed";
-import { gre500Words } from "./gre500";
+import { BUILTIN_DECKS, DECKS, deckOf, seedKey, type DeckId } from "./decks";
 import { dayKey, daysAgo, makeWord, uid, wordKey } from "./utils";
 
 const KEY = "shobdo-khata:v1";
 const DEFAULT_STATS: Stats = { streak: 0, bestStreak: 0, lastDay: "", history: {}, dailyGoal: 20 };
 const MAX_GAME_RESULTS = 100;
 
-type State = { words: Word[]; stats: Stats; gameResults: GameResult[] };
+type State = { words: Word[]; stats: Stats; gameResults: GameResult[]; seeded: string[] };
 
 type Store = {
   ready: boolean;
   words: Word[];
   stats: Stats;
   gameResults: GameResult[];
-  addWord: (input: WordInput) => void;
+  addWord: (input: WordInput, deck: string) => void;
   updateWord: (id: string, input: WordInput) => void;
   deleteWord: (id: string) => void;
   toggleStar: (id: string) => void;
   recordAnswer: (id: string, correct: boolean) => void;
   recordGameResult: (result: Omit<GameResult, "id" | "date">) => void;
-  importWords: (items: ImportItem[]) => { added: number; skipped: number };
+  importWords: (items: ImportItem[], deck: string) => { added: number; skipped: number };
   setDailyGoal: (n: number) => void;
   resetProgress: () => void;
-  loadStarter: () => number;
-  loadGre500: () => number;
-  clearAll: () => void;
+  restoreDeck: (deck: string) => number;
+  clearDeck: (deck: string) => void;
 };
 
 const Ctx = createContext<Store | null>(null);
+
+const inDeck = (w: Word, deck: string) => deckOf(w) === deck;
+const keyIn = (deck: string, english: string, bangla: string) => `${deck}|${wordKey(english, bangla)}`;
 
 function bump(stats: Stats): Stats {
   const today = dayKey();
@@ -57,29 +58,59 @@ function bump(stats: Stats): Stats {
   };
 }
 
+/** Adds every built-in list that has not been added yet (a list you delete is not re-added by itself). */
+function seedBuiltins(words: Word[], seeded: string[]) {
+  let out = words;
+  const done = [...seeded];
+  const now = Date.now();
+  for (const d of DECKS) {
+    const list = BUILTIN_DECKS[d.id];
+    if (!list || list.length === 0) continue;
+    const mark = seedKey(d.id);
+    if (done.includes(mark)) continue;
+    const have = new Set(out.filter((w) => inDeck(w, d.id)).map((w) => wordKey(w.english, w.bangla)));
+    const add: Word[] = [];
+    list.forEach((s, i) => {
+      const k = wordKey(s.english, s.bangla);
+      if (have.has(k)) return;
+      have.add(k);
+      add.push({ ...makeWord(s, now - i), deck: d.id });
+    });
+    out = [...add, ...out];
+    done.push(mark);
+  }
+  return { words: out, seeded: done };
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<State>({ words: [], stats: DEFAULT_STATS, gameResults: [] });
+  const [state, setState] = useState<State>({ words: [], stats: DEFAULT_STATS, gameResults: [], seeded: [] });
   const [ready, setReady] = useState(false);
   const ref = useRef(state);
   ref.current = state;
 
   // Load once on the client
   useEffect(() => {
-    let next: State = { words: seedWords(), stats: DEFAULT_STATS, gameResults: [] };
+    let base: State = { words: [], stats: DEFAULT_STATS, gameResults: [], seeded: [] };
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
         const p = JSON.parse(raw) as Partial<State>;
-        next = {
-          words: Array.isArray(p.words) ? p.words : [],
+        const stored = Array.isArray(p.words) ? p.words : [];
+        base = {
+          // The old built-in lists (starter / gre500) are dropped; words you added yourself move to "My words".
+          words: stored
+            .filter((w) => !(w.deck === undefined && ((w.tags ?? []).includes("starter") || (w.tags ?? []).includes("gre500"))))
+            .map((w) => ({ ...w, deck: w.deck ?? "mine" })),
           stats: { ...DEFAULT_STATS, ...(p.stats ?? {}) },
           gameResults: Array.isArray(p.gameResults) ? p.gameResults : [],
+          seeded: Array.isArray(p.seeded) ? p.seeded : [],
         };
       }
     } catch {
-      /* corrupted or blocked storage: start from the starter list */
+      /* corrupted or blocked storage: start fresh */
     }
-    setState(next);
+    const seeded = seedBuiltins(base.words, base.seeded);
+    setState({ ...base, ...seeded });
     setReady(true);
   }, []);
 
@@ -99,7 +130,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     stats: state.stats,
     gameResults: state.gameResults,
 
-    addWord: (input) => setState((s) => ({ ...s, words: [makeWord(input), ...s.words] })),
+    addWord: (input, deck) =>
+      setState((s) => ({ ...s, words: [{ ...makeWord(input), deck }, ...s.words] })),
 
     updateWord: (id, input) =>
       setState((s) => ({
@@ -140,15 +172,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         gameResults: [{ ...result, id: uid(), date: Date.now() }, ...s.gameResults].slice(0, MAX_GAME_RESULTS),
       })),
 
-    importWords: (items) => {
-      const seen = new Set(ref.current.words.map((w) => wordKey(w.english, w.bangla)));
+    importWords: (items, deck) => {
+      const seen = new Set(ref.current.words.map((w) => keyIn(deckOf(w), w.english, w.bangla)));
       const fresh: Word[] = [];
       let skipped = 0;
       const now = Date.now();
       items.forEach((it, i) => {
         const english = it.english?.trim();
         const bangla = it.bangla?.trim();
-        const key = wordKey(english ?? "", bangla ?? "");
+        const target = it.deck ?? deck;
+        const key = keyIn(target, english ?? "", bangla ?? "");
         if (!english || !bangla || seen.has(key)) {
           skipped++;
           return;
@@ -157,6 +190,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const base = makeWord(it, now - i);
         fresh.push({
           ...base,
+          deck: target,
           box: typeof it.box === "number" ? it.box : 0,
           due: typeof it.due === "number" ? it.due : 0,
           correct: typeof it.correct === "number" ? it.correct : 0,
@@ -178,21 +212,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         words: s.words.map((w) => ({ ...w, box: 0, due: 0, correct: 0, wrong: 0 })),
       })),
 
-    loadStarter: () => {
-      const seen = new Set(ref.current.words.map((w) => wordKey(w.english, w.bangla)));
-      const add = seedWords().filter((w) => !seen.has(wordKey(w.english, w.bangla)));
+    restoreDeck: (deck) => {
+      const list = BUILTIN_DECKS[deck as DeckId] ?? [];
+      const have = new Set(ref.current.words.filter((w) => inDeck(w, deck)).map((w) => wordKey(w.english, w.bangla)));
+      const now = Date.now();
+      const add: Word[] = [];
+      list.forEach((s, i) => {
+        const k = wordKey(s.english, s.bangla);
+        if (have.has(k)) return;
+        have.add(k);
+        add.push({ ...makeWord(s, now - i), deck });
+      });
       if (add.length) setState((s) => ({ ...s, words: [...add, ...s.words] }));
       return add.length;
     },
 
-    loadGre500: () => {
-      const seen = new Set(ref.current.words.map((w) => wordKey(w.english, w.bangla)));
-      const add = gre500Words().filter((w) => !seen.has(wordKey(w.english, w.bangla)));
-      if (add.length) setState((s) => ({ ...s, words: [...add, ...s.words] }));
-      return add.length;
-    },
-
-    clearAll: () => setState((s) => ({ ...s, words: [] })),
+    clearDeck: (deck) => setState((s) => ({ ...s, words: s.words.filter((w) => !inDeck(w, deck)) })),
   };
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
