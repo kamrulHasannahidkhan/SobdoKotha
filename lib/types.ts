@@ -5,7 +5,12 @@ export type Word = {
   english: string;
   bangla: string;
   pos: string;
+  /** Simple example sentence. */
   example: string;
+  /** Optional compound-sentence example. */
+  example2: string;
+  /** Optional complex-sentence example. */
+  example3: string;
   tags: string[];
   /** Which list the word lives in: "gre-iba", "words-1000" or "mine" */
   deck?: string;
@@ -19,7 +24,8 @@ export type Word = {
   createdAt: number;
 };
 
-export type WordInput = Pick<Word, "english" | "bangla" | "pos" | "example" | "tags">;
+export type WordInput = Pick<Word, "english" | "bangla" | "pos" | "example" | "tags"> &
+  Partial<Pick<Word, "example2" | "example3">>;
 
 export type ImportItem = WordInput &
   Partial<Pick<Word, "box" | "due" | "correct" | "wrong" | "starred" | "deck">>;
