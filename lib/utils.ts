@@ -31,6 +31,8 @@ export function makeWord(input: WordInput, createdAt: number = Date.now()): Word
     bangla: input.bangla.trim(),
     pos: input.pos ?? "",
     example: (input.example ?? "").trim(),
+    example2: (input.example2 ?? "").trim(),
+    example3: (input.example3 ?? "").trim(),
     tags: input.tags ?? [],
     box: 0,
     due: 0,
