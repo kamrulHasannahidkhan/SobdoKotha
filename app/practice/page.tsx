@@ -11,7 +11,8 @@ import type { Direction, Word } from "@/lib/types";
 
 type Mode = "flash" | "choice" | "type" | "cloze" | "game";
 type DirSetting = Direction | "mixed";
-type Source = "due" | "new" | "weak" | "starred" | "all";
+type Source = "due" | "new" | "weak" | "starred" | "all" | "range";
+type Order = "shuffled" | "serial";
 type Item = { id: string; dir: Direction; tries: number };
 
 const promptOf = (w: Word, d: Direction) => (d === "en-bn" ? w.english : w.bangla);
@@ -24,24 +25,57 @@ const GAME_POINTS_BASE = 10;
 const GAME_POINTS_PER_STREAK = 2;
 const pointsFor = (streakBefore: number) => GAME_POINTS_BASE + Math.min(streakBefore, GAME_STREAK_CAP) * GAME_POINTS_PER_STREAK;
 
-function pool(words: Word[], source: Source, tag: string, clozeOnly = false) {
-  const now = Date.now();
+/** All non-empty example sentences a word has, in order (simple, compound, complex). */
+function examplesOf(w: Word): string[] {
+  return [w.example, w.example2, w.example3].filter((s): s is string => !!s && s.trim().length > 0);
+}
+
+function hasClozeBlank(w: Word) {
+  return examplesOf(w).some((ex) => findClozeBlank(ex, w.english));
+}
+
+function eligible(words: Word[], tag: string, clozeOnly: boolean) {
   return words.filter((w) => {
     if (tag && !w.tags.includes(tag)) return false;
-    if (clozeOnly && !findClozeBlank(w.example, w.english)) return false;
+    if (clozeOnly && !hasClozeBlank(w)) return false;
+    return true;
+  });
+}
+
+function pool(words: Word[], source: Source, tag: string, clozeOnly = false) {
+  const now = Date.now();
+  return eligible(words, tag, clozeOnly).filter((w) => {
     switch (source) {
       case "due": return isDue(w, now);
       case "new": return isNew(w);
       case "weak": return isWeak(w);
       case "starred": return w.starred;
-      default: return true;
+      default: return true; // "all" and "range" (range is sliced separately)
     }
   });
 }
 
-function buildQueue(words: Word[], source: Source, tag: string, count: number, dir: DirSetting, clozeOnly = false): Item[] {
-  let list = shuffle(pool(words, source, tag, clozeOnly));
-  if (count > 0) list = list.slice(0, count);
+function buildQueue(
+  words: Word[],
+  source: Source,
+  tag: string,
+  count: number,
+  dir: DirSetting,
+  clozeOnly: boolean,
+  order: Order,
+  range: { from: number; to: number },
+): Item[] {
+  let list: Word[];
+  if (source === "range") {
+    const base = eligible(words, tag, clozeOnly);
+    const from = Math.max(1, Math.min(range.from, base.length));
+    const to = Math.max(from, Math.min(range.to, base.length));
+    list = base.slice(from - 1, to);
+  } else {
+    list = pool(words, source, tag, clozeOnly);
+    if (order === "shuffled") list = shuffle(list);
+    if (count > 0) list = list.slice(0, count);
+  }
   return list.map((w) => ({
     id: w.id,
     dir: dir === "mixed" ? (Math.random() < 0.5 ? "en-bn" : "bn-en") : dir,
@@ -258,7 +292,14 @@ function Type({ word, dir, onDone }: CardProps) {
 /* ---------- fill in the blank ---------- */
 
 function Cloze({ word, onDone }: CardProps) {
-  const blank = useMemo(() => findClozeBlank(word.example, word.english), [word]);
+  const blank = useMemo(() => {
+    const candidates = examplesOf(word)
+      .map((ex) => findClozeBlank(ex, word.english))
+      .filter((b): b is NonNullable<typeof b> => !!b);
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [word.id]);
   const [value, setValue] = useState("");
   const [result, setResult] = useState<boolean | null>(null);
   const [hint, setHint] = useState(false);
@@ -448,6 +489,8 @@ export default function PracticePage() {
   const [mode, setMode] = useState<Mode>("flash");
   const [dir, setDir] = useState<DirSetting>("en-bn");
   const [source, setSource] = useState<Source>("due");
+  const [order, setOrder] = useState<Order>("shuffled");
+  const [range, setRange] = useState({ from: 1, to: 20 });
   const [tag, setTag] = useState("");
   const [count, setCount] = useState(20);
   const [items, setItems] = useState<Item[] | null>(null);
@@ -465,12 +508,15 @@ export default function PracticePage() {
 
   const tags = Array.from(new Set(deckWords.flatMap((w) => w.tags))).sort();
   const clozeOnly = mode === "cloze";
-  const available = pool(deckWords, source, tag, clozeOnly).length;
-  const planned = count > 0 ? Math.min(count, available) : available;
+  const eligibleWords = eligible(deckWords, tag, clozeOnly);
+  const available = source === "range" ? eligibleWords.length : pool(deckWords, source, tag, clozeOnly).length;
+  const rangeFrom = Math.max(1, Math.min(range.from || 1, eligibleWords.length || 1));
+  const rangeTo = Math.max(rangeFrom, Math.min(range.to || rangeFrom, eligibleWords.length || 1));
+  const planned = source === "range" ? Math.max(0, Math.min(rangeTo, eligibleWords.length) - rangeFrom + 1) : count > 0 ? Math.min(count, available) : available;
   const choiceOk = words.length >= 2;
 
   function start() {
-    setItems(buildQueue(deckWords, source, tag, count, dir, clozeOnly));
+    setItems(buildQueue(deckWords, source, tag, count, dir, clozeOnly, order, range));
     setRun((r) => r + 1);
   }
 
@@ -479,11 +525,15 @@ export default function PracticePage() {
   }
 
   const note: ReactNode =
-    available === 0
-      ? source === "due" && !tag
-        ? "Nothing is due right now. Pick “All words” to practice anyway."
-        : "No words match these choices."
-      : `${planned} ${planned === 1 ? "word" : "words"} in this session.`;
+    source === "range"
+      ? planned === 0
+        ? "That range has no eligible words. Adjust the numbers above."
+        : `Words ${rangeFrom} to ${Math.min(rangeTo, eligibleWords.length)} of ${eligibleWords.length}, in list order.`
+      : available === 0
+        ? source === "due" && !tag
+          ? "Nothing is due right now. Pick “All words” to practice anyway."
+          : "No words match these choices."
+        : `${planned} ${planned === 1 ? "word" : "words"} in this session${order === "serial" ? ", in list order" : ""}.`;
 
   return (
     <>
@@ -535,19 +585,57 @@ export default function PracticePage() {
             { value: "new", label: "New" },
             { value: "weak", label: "Needs work" },
             { value: "starred", label: "Starred" },
+            { value: "range", label: "Range" },
           ]}
         />
-        <Segmented<number>
-          legend="Length"
-          value={count}
-          onChange={setCount}
-          options={[
-            { value: 10, label: "10" },
-            { value: 20, label: "20" },
-            { value: 50, label: "50" },
-            { value: 0, label: "All" },
-          ]}
-        />
+        {source === "range" ? (
+          <div className="field">
+            <label htmlFor="range-from">Word range (in list order)</label>
+            <div className="rangepick">
+              <input
+                id="range-from"
+                type="number"
+                min={1}
+                max={eligibleWords.length || 1}
+                value={range.from}
+                onChange={(e) => setRange((r) => ({ ...r, from: parseInt(e.target.value, 10) || 1 }))}
+              />
+              <span>to</span>
+              <input
+                id="range-to"
+                type="number"
+                min={1}
+                max={eligibleWords.length || 1}
+                value={range.to}
+                onChange={(e) => setRange((r) => ({ ...r, to: parseInt(e.target.value, 10) || 1 }))}
+              />
+              <span className="muted">of {eligibleWords.length}</span>
+            </div>
+          </div>
+        ) : (
+          <>
+            <Segmented<number>
+              legend="Length"
+              value={count}
+              onChange={setCount}
+              options={[
+                { value: 10, label: "10" },
+                { value: 20, label: "20" },
+                { value: 50, label: "50" },
+                { value: 0, label: "All" },
+              ]}
+            />
+            <Segmented<Order>
+              legend="Order"
+              value={order}
+              onChange={setOrder}
+              options={[
+                { value: "shuffled", label: "Shuffled" },
+                { value: "serial", label: "Serial (list order)" },
+              ]}
+            />
+          </>
+        )}
         {tags.length > 0 && (
           <div className="field">
             <label htmlFor="tag">Only words tagged</label>
@@ -571,7 +659,7 @@ export default function PracticePage() {
 
       <p className="notice" role="status">{note}</p>
       <div className="actions">
-        <button className="btn primary" onClick={start} disabled={available === 0}>Start</button>
+        <button className="btn primary" onClick={start} disabled={planned === 0}>Start</button>
         {words.length === 0 && <Link href="/words" className="btn">Add words first</Link>}
       </div>
     </>
