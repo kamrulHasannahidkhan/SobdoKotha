@@ -12,8 +12,8 @@
   --bad: #b5303e;
   --bad-bg: #fce2e5;
   --hi: #ffe680;
-  --ui: "Hind Siliguri", "Noto Sans Bengali", "Nirmala UI", "Segoe UI", system-ui, sans-serif;
-  --display: "Tiro Bangla", "Hind Siliguri", "Noto Sans Bengali", Georgia, serif;
+  --ui: var(--font-hind), "Hind Siliguri", "Noto Sans Bengali", system-ui, sans-serif;
+  --display: var(--font-tiro), "Tiro Bangla", Georgia, serif;
   color-scheme: light;
 }
 
