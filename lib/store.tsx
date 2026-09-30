@@ -68,7 +68,26 @@ function seedBuiltins(words: Word[], seeded: string[]) {
     if (!list || list.length === 0) continue;
     const mark = seedKey(d.id);
     if (done.includes(mark)) continue;
-    const have = new Set(out.filter((w) => inDeck(w, d.id)).map((w) => wordKey(w.english, w.bangla)));
+
+    const byKey = new Map(list.map((s) => [wordKey(s.english, s.bangla), s]));
+    const have = new Set<string>();
+    // Merge current built-in content (e.g. sentences added later) into words
+    // already saved from an earlier version, keeping their id and progress.
+    out = out.map((w) => {
+      if (!inDeck(w, d.id)) return w;
+      const k = wordKey(w.english, w.bangla);
+      have.add(k);
+      const src = byKey.get(k);
+      if (!src) return w;
+      return {
+        ...w,
+        pos: src.pos || w.pos,
+        example: src.example || w.example,
+        example2: src.example2 || w.example2,
+        example3: src.example3 || w.example3,
+      };
+    });
+
     const add: Word[] = [];
     list.forEach((s, i) => {
       const k = wordKey(s.english, s.bangla);
