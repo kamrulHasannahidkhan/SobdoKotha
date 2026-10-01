@@ -614,17 +614,26 @@ export default function PracticePage() {
           </div>
         ) : (
           <>
-            <Segmented<number>
-              legend="Length"
-              value={count}
-              onChange={setCount}
-              options={[
-                { value: 10, label: "10" },
-                { value: 20, label: "20" },
-                { value: 50, label: "50" },
-                { value: 0, label: "All" },
-              ]}
-            />
+                        <div className="field">
+              <label htmlFor="count">How many words</label>
+              <div className="rangepick">
+                <input
+                  id="count"
+                  type="number"
+                  min={1}
+                  max={available || 1}
+                  value={count === 0 ? "" : count}
+                  placeholder="All"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCount(v === "" ? 0 : Math.max(1, parseInt(v, 10) || 1));
+                  }}
+                />
+                <button type="button" className={`btn small ${count === 0 ? "primary" : ""}`} onClick={() => setCount(0)}>
+                  All
+                </button>
+              </div>
+            </div>
             <Segmented<Order>
               legend="Order"
               value={order}
