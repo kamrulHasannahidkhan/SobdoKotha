@@ -8,16 +8,24 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { GameResult, ImportItem, Stats, Word, WordInput } from "./types";
+import type { GameResult, ImportItem, InterviewQuestion, ReadingPassage, Stats, Word, WordInput } from "./types";
 import { grade } from "./srs";
 import { BUILTIN_DECKS, DECKS, deckOf, seedKey, type DeckId } from "./decks";
+import { defaultInterviewQuestions, defaultReadingPassages } from "./speaking-seed";
 import { dayKey, daysAgo, makeWord, uid, wordKey } from "./utils";
 
 const KEY = "shobdo-khata:v1";
 const DEFAULT_STATS: Stats = { streak: 0, bestStreak: 0, lastDay: "", history: {}, dailyGoal: 20, dailyTasks: {} };
 const MAX_GAME_RESULTS = 100;
 
-type State = { words: Word[]; stats: Stats; gameResults: GameResult[]; seeded: string[] };
+type State = {
+  words: Word[];
+  stats: Stats;
+  gameResults: GameResult[];
+  seeded: string[];
+  interviewQuestions: InterviewQuestion[];
+  readingPassages: ReadingPassage[];
+};
 
 type Store = {
   ready: boolean;
@@ -37,6 +45,18 @@ type Store = {
   resetProgress: () => void;
   restoreDeck: (deck: string) => number;
   clearDeck: (deck: string) => void;
+
+  interviewQuestions: InterviewQuestion[];
+  addInterviewQuestion: (question: string) => void;
+  updateInterviewAnswer: (id: string, answer: string) => void;
+  updateInterviewQuestion: (id: string, question: string) => void;
+  deleteInterviewQuestion: (id: string) => void;
+
+  readingPassages: ReadingPassage[];
+  addReadingPassage: (p: Pick<ReadingPassage, "level" | "title" | "text">) => void;
+  updateReadingPassage: (id: string, p: Pick<ReadingPassage, "level" | "title" | "text">) => void;
+  deleteReadingPassage: (id: string) => void;
+  markPassagePracticed: (id: string) => void;
 };
 
 const Ctx = createContext<Store | null>(null);
@@ -103,15 +123,17 @@ function seedBuiltins(words: Word[], seeded: string[]) {
   return { words: out, seeded: done };
 }
 
+const EMPTY_STATE: State = { words: [], stats: DEFAULT_STATS, gameResults: [], seeded: [], interviewQuestions: [], readingPassages: [] };
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<State>({ words: [], stats: DEFAULT_STATS, gameResults: [], seeded: [] });
+  const [state, setState] = useState<State>(EMPTY_STATE);
   const [ready, setReady] = useState(false);
   const ref = useRef(state);
   ref.current = state;
 
   // Load once on the client
   useEffect(() => {
-    let base: State = { words: [], stats: DEFAULT_STATS, gameResults: [], seeded: [] };
+    let base: State = EMPTY_STATE;
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
@@ -125,13 +147,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           stats: { ...DEFAULT_STATS, ...(p.stats ?? {}) },
           gameResults: Array.isArray(p.gameResults) ? p.gameResults : [],
           seeded: Array.isArray(p.seeded) ? p.seeded : [],
+          interviewQuestions: Array.isArray(p.interviewQuestions) ? p.interviewQuestions : [],
+          readingPassages: Array.isArray(p.readingPassages) ? p.readingPassages : [],
         };
       }
     } catch {
       /* corrupted or blocked storage: start fresh */
     }
     const seeded = seedBuiltins(base.words, base.seeded);
-    setState({ ...base, ...seeded });
+    const seededSpeaking = [...seeded.seeded];
+    let interviewQuestions = base.interviewQuestions;
+    let readingPassages = base.readingPassages;
+    if (!seededSpeaking.includes("speaking:v1")) {
+      if (interviewQuestions.length === 0) interviewQuestions = defaultInterviewQuestions();
+      if (readingPassages.length === 0) readingPassages = defaultReadingPassages();
+      seededSpeaking.push("speaking:v1");
+    }
+    setState({ ...base, ...seeded, seeded: seededSpeaking, interviewQuestions, readingPassages });
     setReady(true);
   }, []);
 
@@ -262,6 +294,65 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
 
     clearDeck: (deck) => setState((s) => ({ ...s, words: s.words.filter((w) => !inDeck(w, deck)) })),
+
+    interviewQuestions: state.interviewQuestions,
+
+    addInterviewQuestion: (question) =>
+      setState((s) => ({
+        ...s,
+        interviewQuestions: [...s.interviewQuestions, { id: uid(), question: question.trim(), answer: "" }],
+      })),
+
+    updateInterviewAnswer: (id, answer) =>
+      setState((s) => ({
+        ...s,
+        interviewQuestions: s.interviewQuestions.map((q) => (q.id === id ? { ...q, answer } : q)),
+      })),
+
+    updateInterviewQuestion: (id, question) =>
+      setState((s) => ({
+        ...s,
+        interviewQuestions: s.interviewQuestions.map((q) => (q.id === id ? { ...q, question: question.trim() } : q)),
+      })),
+
+    deleteInterviewQuestion: (id) =>
+      setState((s) => ({ ...s, interviewQuestions: s.interviewQuestions.filter((q) => q.id !== id) })),
+
+    readingPassages: state.readingPassages,
+
+    addReadingPassage: (p) =>
+      setState((s) => ({
+        ...s,
+        readingPassages: [
+          ...s.readingPassages,
+          { id: uid(), level: p.level, title: p.title.trim(), text: p.text.trim(), practiced: [] },
+        ],
+      })),
+
+    updateReadingPassage: (id, p) =>
+      setState((s) => ({
+        ...s,
+        readingPassages: s.readingPassages.map((r) =>
+          r.id === id ? { ...r, level: p.level, title: p.title.trim(), text: p.text.trim() } : r,
+        ),
+      })),
+
+    deleteReadingPassage: (id) =>
+      setState((s) => ({ ...s, readingPassages: s.readingPassages.filter((r) => r.id !== id) })),
+
+    markPassagePracticed: (id) =>
+      setState((s) => {
+        const today = dayKey();
+        const current = s.stats.dailyTasks[today] ?? [];
+        return {
+          ...s,
+          readingPassages: s.readingPassages.map((r) => (r.id === id ? { ...r, practiced: [...r.practiced, Date.now()] } : r)),
+          stats: {
+            ...bump(s.stats),
+            dailyTasks: { ...s.stats.dailyTasks, [today]: current.includes("speaking") ? current : [...current, "speaking"] },
+          },
+        };
+      }),
   };
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;

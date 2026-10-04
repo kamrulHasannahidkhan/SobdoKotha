@@ -52,6 +52,25 @@ export const DAILY_CATEGORIES: DailyCategory[] = [
   { id: "analytical", label: "Analytical" },
 ];
 
+/** One question in the "Partner Interview" speaking exercise, with your own written answer. */
+export type InterviewQuestion = {
+  id: string;
+  question: string;
+  answer: string;
+};
+
+export type ReadingLevel = "beginner" | "intermediate" | "advanced";
+
+/** One passage to read aloud, at a given level. */
+export type ReadingPassage = {
+  id: string;
+  level: ReadingLevel;
+  title: string;
+  text: string;
+  /** Timestamps (ms) of each time you marked this passage practiced. */
+  practiced: number[];
+};
+
 /** One completed run of the scored Bangla-to-English test. */
 export type GameResult = {
   id: string;
