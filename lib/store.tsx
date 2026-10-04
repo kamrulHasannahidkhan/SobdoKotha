@@ -14,7 +14,7 @@ import { BUILTIN_DECKS, DECKS, deckOf, seedKey, type DeckId } from "./decks";
 import { dayKey, daysAgo, makeWord, uid, wordKey } from "./utils";
 
 const KEY = "shobdo-khata:v1";
-const DEFAULT_STATS: Stats = { streak: 0, bestStreak: 0, lastDay: "", history: {}, dailyGoal: 20 };
+const DEFAULT_STATS: Stats = { streak: 0, bestStreak: 0, lastDay: "", history: {}, dailyGoal: 20, dailyTasks: {} };
 const MAX_GAME_RESULTS = 100;
 
 type State = { words: Word[]; stats: Stats; gameResults: GameResult[]; seeded: string[] };
@@ -32,6 +32,8 @@ type Store = {
   recordGameResult: (result: Omit<GameResult, "id" | "date">) => void;
   importWords: (items: ImportItem[], deck: string) => { added: number; skipped: number };
   setDailyGoal: (n: number) => void;
+  toggleDailyCategory: (day: string, category: string) => void;
+  setDailyAll: (day: string, categories: string[], done: boolean) => void;
   resetProgress: () => void;
   restoreDeck: (deck: string) => number;
   clearDeck: (deck: string) => void;
@@ -224,10 +226,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setDailyGoal: (n) =>
       setState((s) => ({ ...s, stats: { ...s.stats, dailyGoal: Math.max(1, Math.min(500, n || 1)) } })),
 
+    toggleDailyCategory: (day, category) =>
+      setState((s) => {
+        const current = s.stats.dailyTasks[day] ?? [];
+        const next = current.includes(category) ? current.filter((c) => c !== category) : [...current, category];
+        return { ...s, stats: { ...s.stats, dailyTasks: { ...s.stats.dailyTasks, [day]: next } } };
+      }),
+
+    setDailyAll: (day, categories, done) =>
+      setState((s) => ({
+        ...s,
+        stats: { ...s.stats, dailyTasks: { ...s.stats.dailyTasks, [day]: done ? [...categories] : [] } },
+      })),
+
     resetProgress: () =>
       setState((s) => ({
         ...s,
-        stats: { ...DEFAULT_STATS, dailyGoal: s.stats.dailyGoal },
+        stats: { ...DEFAULT_STATS, dailyGoal: s.stats.dailyGoal, dailyTasks: s.stats.dailyTasks },
         words: s.words.map((w) => ({ ...w, box: 0, due: 0, correct: 0, wrong: 0 })),
       })),
 

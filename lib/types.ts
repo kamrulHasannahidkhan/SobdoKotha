@@ -38,7 +38,19 @@ export type Stats = {
   /** answers per day, keyed by yyyy-mm-dd */
   history: Record<string, number>;
   dailyGoal: number;
+  /** Daily checklist: yyyy-mm-dd -> list of completed category ids. */
+  dailyTasks: Record<string, string[]>;
 };
+
+export type DailyCategory = { id: string; label: string };
+
+export const DAILY_CATEGORIES: DailyCategory[] = [
+  { id: "speaking", label: "Speaking" },
+  { id: "grammar", label: "Grammar" },
+  { id: "vocab", label: "Vocab" },
+  { id: "math", label: "Math" },
+  { id: "analytical", label: "Analytical" },
+];
 
 /** One completed run of the scored Bangla-to-English test. */
 export type GameResult = {
