@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { isDue, isNew, isWeak } from "@/lib/srs";
 import { DECKS, deckOf } from "@/lib/decks";
-import { acceptedAnswers, firstGrapheme, normalize, shuffle } from "@/lib/utils";
+import { acceptedAnswers, findClozeBlank, firstGrapheme, normalize, shuffle } from "@/lib/utils";
 import { SpeakButton } from "@/components/SpeakButton";
 import type { Direction, Word } from "@/lib/types";
 
@@ -25,34 +25,16 @@ const GAME_POINTS_BASE = 10;
 const GAME_POINTS_PER_STREAK = 2;
 const pointsFor = (streakBefore: number) => GAME_POINTS_BASE + Math.min(streakBefore, GAME_STREAK_CAP) * GAME_POINTS_PER_STREAK;
 
-/** Combines all available example sentence fields into a single string */
-function getCombinedExample(w: Word): string {
+/** Splits example fields or strings joined by semicolons/newlines into distinct sentences. */
+function getIndividualSentences(w: Word): string[] {
   const rawExamples = [w.example, w.example2, w.example3].filter((s): s is string => !!s && s.trim().length > 0);
-  return rawExamples
-    .flatMap((ex) => ex.split(/;\s*|\n+/).map((s) => s.trim()).filter(Boolean))
-    .join("; ");
-}
-
-/** Replaces ALL occurrences of the target word (and common inflections) with blanks */
-function findAllClozeBlanks(fullText: string, targetWord: string) {
-  if (!fullText || !targetWord) return null;
-
-  const escapedWord = targetWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(`\\b${escapedWord}(?:s|es|ed|ing)?\\b`, "gi");
-
-  if (!regex.test(fullText)) return null;
-
-  const parts = fullText.split(regex);
-  const matches = fullText.match(regex) || [];
-
-  return {
-    parts,
-    answers: Array.from(new Set([normalize(targetWord), ...matches.map(normalize)])),
-  };
+  return rawExamples.flatMap((ex) =>
+    ex.split(/;\s*|\n+/).map((s) => s.trim()).filter(Boolean)
+  );
 }
 
 function hasClozeBlank(w: Word) {
-  return findAllClozeBlanks(getCombinedExample(w), w.english) !== null;
+  return getIndividualSentences(w).some((sentence) => findClozeBlank(sentence, w.english));
 }
 
 function eligible(words: Word[], tag: string, clozeOnly: boolean) {
@@ -318,21 +300,32 @@ function Type({ word, dir, onDone }: CardProps) {
 /* ---------- fill in the blank ---------- */
 
 function Cloze({ word, onDone }: CardProps) {
-  const combinedText = useMemo(() => getCombinedExample(word), [word]);
-  const clozeData = useMemo(() => findAllClozeBlanks(combinedText, word.english), [combinedText, word.english]);
+  const clozeItems = useMemo(() => {
+    const sentences = getIndividualSentences(word);
+    return sentences
+      .map((sentence) => ({
+        sentence,
+        blank: findClozeBlank(sentence, word.english),
+      }))
+      .filter((item): item is { sentence: string; blank: NonNullable<ReturnType<typeof findClozeBlank>> } => !!item.blank);
+  }, [word.id, word.english]);
 
   const [value, setValue] = useState("");
   const [result, setResult] = useState<boolean | null>(null);
   const [hint, setHint] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const allAnswers = useMemo(() => {
+    return Array.from(new Set(clozeItems.flatMap((item) => item.blank.answers)));
+  }, [clozeItems]);
+
   function check() {
-    if (!value.trim() || !clozeData) return;
-    const isCorrect = clozeData.answers.includes(normalize(value));
+    if (!value.trim() || clozeItems.length === 0) return;
+    const isCorrect = allAnswers.includes(normalize(value));
     setResult(isCorrect);
   }
 
-  if (!clozeData) {
+  if (clozeItems.length === 0) {
     return (
       <>
         <div className="card compact">
@@ -353,19 +346,23 @@ function Cloze({ word, onDone }: CardProps) {
           {word.bangla}
           {word.pos ? ` · ${word.pos}` : ""}
         </p>
-        <p className="prompt cloze-sentence" lang="en">
-          {clozeData.parts.map((part, index) => (
-            <span key={index}>
-              {part}
-              {index < clozeData.parts.length - 1 && (
-                <span className="cloze-gap">
-                  {result === null ? "_____" : word.english}
-                </span>
-              )}
-            </span>
+        
+        <ul className="cloze-list space-y-2 my-2">
+          {clozeItems.map(({ blank }, idx) => (
+            <li key={idx} className="prompt cloze-sentence" lang="en">
+              <span className="muted mr-2">{idx + 1}.</span>
+              {blank.before}
+              <span className="cloze-gap">
+                {result === null 
+                  ? "_____" 
+                  : blank.answers.find((a) => a !== normalize(word.english)) ?? word.english}
+              </span>
+              {blank.after}
+            </li>
           ))}
-        </p>
+        </ul>
       </div>
+
       <div className="typebox">
         <label htmlFor="cloze-typed">Type the missing word</label>
         <input
@@ -388,6 +385,7 @@ function Cloze({ word, onDone }: CardProps) {
         />
         {result === null && hint && <p className="muted">Starts with <b lang="en">{firstGrapheme(word.english)}</b></p>}
       </div>
+
       {result === null ? (
         <div className="actions">
           <button className="btn primary" onClick={check} disabled={!value.trim()}>Check <kbd>Enter</kbd></button>
@@ -703,7 +701,7 @@ export default function PracticePage() {
         <p className="muted">Type the answer for each word. Correct answers score points, and a streak of correct answers earns a bonus.</p>
       )}
       {mode === "cloze" && (
-        <p className="muted">You'll see each word's example sentences with the target word blanked out — type the missing word. Direction doesn't apply here; only words with a usable example sentence are included.</p>
+        <p className="muted">You'll see all example sentences for a word at once with the word blanked out. Type the missing word to proceed.</p>
       )}
 
       <p className="notice" role="status">{note}</p>
