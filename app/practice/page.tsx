@@ -67,11 +67,18 @@ function buildQueue(
 ): Item[] {
   let list: Word[];
   if (source === "range") {
+    // 1. Get the list in original serial order
     const base = eligible(words, tag, clozeOnly);
     const from = Math.max(1, Math.min(range.from, base.length));
     const to = Math.max(from, Math.min(range.to, base.length));
+    
+    // 2. Slice the EXACT range (e.g., 50 to 200) first
     list = base.slice(from - 1, to);
-    if (order === "shuffled") list = shuffle(list);
+    
+    // 3. Shuffle ONLY the words inside that sliced range
+    if (order === "shuffled") {
+      list = shuffle(list);
+    }
   } else {
     list = pool(words, source, tag, clozeOnly);
     if (order === "shuffled") list = shuffle(list);
@@ -529,7 +536,7 @@ export default function PracticePage() {
     source === "range"
       ? planned === 0
         ? "That range has no eligible words. Adjust the numbers above."
-        : `Words ${rangeFrom} to ${Math.min(rangeTo, eligibleWords.length)} of ${eligibleWords.length}${order === "serial" ? ", in list order" : ""}.`
+        : `Words ${rangeFrom} to ${Math.min(rangeTo, eligibleWords.length)} of ${eligibleWords.length}${order === "serial" ? ", in list order" : ", shuffled within range"}.`
       : available === 0
         ? source === "due" && !tag
           ? "Nothing is due right now. Pick “All words” to practice anyway."
