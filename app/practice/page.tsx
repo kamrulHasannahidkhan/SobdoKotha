@@ -300,25 +300,49 @@ function Type({ word, dir, onDone }: CardProps) {
 /* ---------- fill in the blank ---------- */
 
 function Cloze({ word, onDone }: CardProps) {
-  const blank = useMemo(() => {
-    const candidates = examplesOf(word)
+  // Find all eligible example sentences with blanks for this word
+  const blanks = useMemo(() => {
+    return examplesOf(word)
       .map((ex) => findClozeBlank(ex, word.english))
       .filter((b): b is NonNullable<typeof b> => !!b);
-    if (candidates.length === 0) return null;
-    return candidates[Math.floor(Math.random() * candidates.length)];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [word.id]);
+
+  const [blankIdx, setBlankIdx] = useState(0);
   const [value, setValue] = useState("");
   const [result, setResult] = useState<boolean | null>(null);
   const [hint, setHint] = useState(false);
+  const [hasMissed, setHasMissed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const currentBlank = blanks[blankIdx];
+
   function check() {
-    if (!value.trim() || !blank) return;
-    setResult(blank.answers.includes(normalize(value)));
+    if (!value.trim() || !currentBlank) return;
+    const isCorrect = currentBlank.answers.includes(normalize(value));
+    setResult(isCorrect);
+    if (!isCorrect) {
+      setHasMissed(true);
+    }
   }
 
-  if (!blank) {
+  function handleNext(isCorrect: boolean) {
+    const finalCorrect = isCorrect && result;
+    const currentMissed = hasMissed || !finalCorrect;
+
+    // If there are more sentences for this word, go to next sentence
+    if (blankIdx < blanks.length - 1) {
+      setBlankIdx((i) => i + 1);
+      setValue("");
+      setResult(null);
+      setHint(false);
+      if (currentMissed) setHasMissed(true);
+    } else {
+      // All sentences completed for this word
+      onDone(!currentMissed);
+    }
+  }
+
+  if (blanks.length === 0 || !currentBlank) {
     return (
       <>
         <div className="card compact">
@@ -335,14 +359,23 @@ function Cloze({ word, onDone }: CardProps) {
   return (
     <>
       <div className="card compact">
-        <p className="muted pos-line">
-          {word.bangla}
-          {word.pos ? ` · ${word.pos}` : ""}
-        </p>
+        <div className="flex justify-between items-center">
+          <p className="muted pos-line">
+            {word.bangla}
+            {word.pos ? ` · ${word.pos}` : ""}
+          </p>
+          {blanks.length > 1 && (
+            <span className="chip">Sentence {blankIdx + 1} of {blanks.length}</span>
+          )}
+        </div>
         <p className="prompt cloze-sentence" lang="en">
-          {blank.before}
-          <span className="cloze-gap">{result === null ? "_____" : blank.answers.find((a) => a !== normalize(word.english)) ?? word.english}</span>
-          {blank.after}
+          {currentBlank.before}
+          <span className="cloze-gap">
+            {result === null 
+              ? "_____" 
+              : currentBlank.answers.find((a) => a !== normalize(word.english)) ?? word.english}
+          </span>
+          {currentBlank.after}
         </p>
       </div>
       <div className="typebox">
@@ -362,7 +395,7 @@ function Cloze({ word, onDone }: CardProps) {
             if (e.key !== "Enter") return;
             e.preventDefault();
             if (result === null) check();
-            else onDone(result);
+            else handleNext(result);
           }}
         />
         {result === null && hint && <p className="muted">Starts with <b lang="en">{firstGrapheme(word.english)}</b></p>}
@@ -371,7 +404,10 @@ function Cloze({ word, onDone }: CardProps) {
         <div className="actions">
           <button className="btn primary" onClick={check} disabled={!value.trim()}>Check <kbd>Enter</kbd></button>
           <button className="btn" onClick={() => setHint(true)} disabled={hint}>Hint</button>
-          <button className="btn ghost" onClick={() => setResult(false)}>I don’t know</button>
+          <button className="btn ghost" onClick={() => {
+            setResult(false);
+            setHasMissed(true);
+          }}>I don’t know</button>
         </div>
       ) : (
         <>
@@ -380,7 +416,9 @@ function Cloze({ word, onDone }: CardProps) {
           </p>
           <SpeakButton text={word.english} />
           <div className="actions">
-            <button className="btn primary" onClick={() => onDone(result)}>Next <kbd>Enter</kbd></button>
+            <button className="btn primary" onClick={() => handleNext(result)}>
+              {blankIdx < blanks.length - 1 ? "Next sentence" : "Next word"} <kbd>Enter</kbd>
+            </button>
             {!result && value.trim() && (
               <button className="btn" onClick={() => setResult(true)}>Count as correct</button>
             )}
