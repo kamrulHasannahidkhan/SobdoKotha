@@ -25,13 +25,16 @@ const GAME_POINTS_BASE = 10;
 const GAME_POINTS_PER_STREAK = 2;
 const pointsFor = (streakBefore: number) => GAME_POINTS_BASE + Math.min(streakBefore, GAME_STREAK_CAP) * GAME_POINTS_PER_STREAK;
 
-/** All non-empty example sentences a word has, in order (simple, compound, complex). */
-function examplesOf(w: Word): string[] {
-  return [w.example, w.example2, w.example3].filter((s): s is string => !!s && s.trim().length > 0);
+/** Splits example fields or strings joined by semicolons/newlines into distinct sentences. */
+function getIndividualSentences(w: Word): string[] {
+  const rawExamples = [w.example, w.example2, w.example3].filter((s): s is string => !!s && s.trim().length > 0);
+  return rawExamples.flatMap((ex) =>
+    ex.split(/;\s*|\n+/).map((s) => s.trim()).filter(Boolean)
+  );
 }
 
 function hasClozeBlank(w: Word) {
-  return examplesOf(w).some((ex) => findClozeBlank(ex, w.english));
+  return getIndividualSentences(w).some((sentence) => findClozeBlank(sentence, w.english));
 }
 
 function eligible(words: Word[], tag: string, clozeOnly: boolean) {
@@ -50,7 +53,7 @@ function pool(words: Word[], source: Source, tag: string, clozeOnly = false) {
       case "new": return isNew(w);
       case "weak": return isWeak(w);
       case "starred": return w.starred;
-      default: return true; // "all" and "range" (range is sliced separately)
+      default: return true;
     }
   });
 }
@@ -67,15 +70,12 @@ function buildQueue(
 ): Item[] {
   let list: Word[];
   if (source === "range") {
-    // 1. Get the list in original serial order
     const base = eligible(words, tag, clozeOnly);
     const from = Math.max(1, Math.min(range.from, base.length));
     const to = Math.max(from, Math.min(range.to, base.length));
     
-    // 2. Slice the EXACT range (e.g., 50 to 200) first
     list = base.slice(from - 1, to);
     
-    // 3. Shuffle ONLY the words inside that sliced range
     if (order === "shuffled") {
       list = shuffle(list);
     }
@@ -300,12 +300,12 @@ function Type({ word, dir, onDone }: CardProps) {
 /* ---------- fill in the blank ---------- */
 
 function Cloze({ word, onDone }: CardProps) {
-  // Find all eligible example sentences with blanks for this word
   const blanks = useMemo(() => {
-    return examplesOf(word)
-      .map((ex) => findClozeBlank(ex, word.english))
+    const sentences = getIndividualSentences(word);
+    return sentences
+      .map((sentence) => findClozeBlank(sentence, word.english))
       .filter((b): b is NonNullable<typeof b> => !!b);
-  }, [word.id]);
+  }, [word.id, word.english]);
 
   const [blankIdx, setBlankIdx] = useState(0);
   const [value, setValue] = useState("");
@@ -329,7 +329,6 @@ function Cloze({ word, onDone }: CardProps) {
     const finalCorrect = isCorrect && result;
     const currentMissed = hasMissed || !finalCorrect;
 
-    // If there are more sentences for this word, go to next sentence
     if (blankIdx < blanks.length - 1) {
       setBlankIdx((i) => i + 1);
       setValue("");
@@ -337,7 +336,6 @@ function Cloze({ word, onDone }: CardProps) {
       setHint(false);
       if (currentMissed) setHasMissed(true);
     } else {
-      // All sentences completed for this word
       onDone(!currentMissed);
     }
   }
