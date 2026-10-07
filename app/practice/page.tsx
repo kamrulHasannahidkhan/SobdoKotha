@@ -71,6 +71,7 @@ function buildQueue(
     const from = Math.max(1, Math.min(range.from, base.length));
     const to = Math.max(from, Math.min(range.to, base.length));
     list = base.slice(from - 1, to);
+    if (order === "shuffled") list = shuffle(list);
   } else {
     list = pool(words, source, tag, clozeOnly);
     if (order === "shuffled") list = shuffle(list);
@@ -528,7 +529,7 @@ export default function PracticePage() {
     source === "range"
       ? planned === 0
         ? "That range has no eligible words. Adjust the numbers above."
-        : `Words ${rangeFrom} to ${Math.min(rangeTo, eligibleWords.length)} of ${eligibleWords.length}, in list order.`
+        : `Words ${rangeFrom} to ${Math.min(rangeTo, eligibleWords.length)} of ${eligibleWords.length}${order === "serial" ? ", in list order" : ""}.`
       : available === 0
         ? source === "due" && !tag
           ? "Nothing is due right now. Pick “All words” to practice anyway."
@@ -589,32 +590,43 @@ export default function PracticePage() {
           ]}
         />
         {source === "range" ? (
-          <div className="field">
-            <label htmlFor="range-from">Word range (in list order)</label>
-            <div className="rangepick">
-              <input
-                id="range-from"
-                type="number"
-                min={1}
-                max={eligibleWords.length || 1}
-                value={range.from}
-                onChange={(e) => setRange((r) => ({ ...r, from: parseInt(e.target.value, 10) || 1 }))}
-              />
-              <span>to</span>
-              <input
-                id="range-to"
-                type="number"
-                min={1}
-                max={eligibleWords.length || 1}
-                value={range.to}
-                onChange={(e) => setRange((r) => ({ ...r, to: parseInt(e.target.value, 10) || 1 }))}
-              />
-              <span className="muted">of {eligibleWords.length}</span>
+          <>
+            <div className="field">
+              <label htmlFor="range-from">Word range (in list order)</label>
+              <div className="rangepick">
+                <input
+                  id="range-from"
+                  type="number"
+                  min={1}
+                  max={eligibleWords.length || 1}
+                  value={range.from}
+                  onChange={(e) => setRange((r) => ({ ...r, from: parseInt(e.target.value, 10) || 1 }))}
+                />
+                <span>to</span>
+                <input
+                  id="range-to"
+                  type="number"
+                  min={1}
+                  max={eligibleWords.length || 1}
+                  value={range.to}
+                  onChange={(e) => setRange((r) => ({ ...r, to: parseInt(e.target.value, 10) || 1 }))}
+                />
+                <span className="muted">of {eligibleWords.length}</span>
+              </div>
             </div>
-          </div>
+            <Segmented<Order>
+              legend="Order"
+              value={order}
+              onChange={setOrder}
+              options={[
+                { value: "shuffled", label: "Shuffled" },
+                { value: "serial", label: "Serial (list order)" },
+              ]}
+            />
+          </>
         ) : (
           <>
-                        <div className="field">
+            <div className="field">
               <label htmlFor="count">How many words</label>
               <div className="rangepick">
                 <input
