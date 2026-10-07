@@ -313,6 +313,7 @@ function Cloze({ word, onDone }: CardProps) {
   const [value, setValue] = useState("");
   const [result, setResult] = useState<boolean | null>(null);
   const [hint, setHint] = useState(false);
+  const [showBangla, setShowBangla] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const allAnswers = useMemo(() => {
@@ -342,10 +343,25 @@ function Cloze({ word, onDone }: CardProps) {
   return (
     <>
       <div className="card compact">
-        <p className="muted pos-line">
-          {word.bangla}
-          {word.pos ? ` · ${word.pos}` : ""}
-        </p>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+          <div className="pos-line" style={{ minHeight: "1.5rem" }}>
+            {showBangla ? (
+              <span lang="bn" style={{ fontWeight: 600, fontSize: "1.1rem" }}>
+                {word.bangla} {word.pos ? <span className="muted" style={{ fontWeight: 400 }}>· {word.pos}</span> : ""}
+              </span>
+            ) : (
+              <span className="muted" style={{ fontStyle: "italic", fontSize: "0.9rem" }}>Bangla meaning hidden</span>
+            )}
+          </div>
+          <button 
+            type="button" 
+            className="btn small ghost"
+            onClick={() => setShowBangla((prev) => !prev)}
+            title="Toggle Bangla meaning"
+          >
+            {showBangla ? "Hide Bangla" : "Show Bangla"}
+          </button>
+        </div>
         
         <ul className="cloze-list space-y-2 my-2">
           {clozeItems.map(({ blank }, idx) => (
@@ -701,7 +717,7 @@ export default function PracticePage() {
         <p className="muted">Type the answer for each word. Correct answers score points, and a streak of correct answers earns a bonus.</p>
       )}
       {mode === "cloze" && (
-        <p className="muted">You'll see all example sentences for a word at once with the word blanked out. Type the missing word to proceed.</p>
+        <p className="muted">You'll see all example sentences for a word at once with the word blanked out. Use the "Show Bangla" button if you need a hint.</p>
       )}
 
       <p className="notice" role="status">{note}</p>
