@@ -11,6 +11,10 @@ export type Word = {
   example2: string;
   /** Optional complex-sentence example. */
   example3: string;
+  /** Up to 5 English synonyms. */
+  synonyms: string[];
+  /** Up to 5 English antonyms. */
+  antonyms: string[];
   tags: string[];
   /** Which list the word lives in: "gre-iba", "words-1000" or "mine" */
   deck?: string;
@@ -25,7 +29,7 @@ export type Word = {
 };
 
 export type WordInput = Pick<Word, "english" | "bangla" | "pos" | "example" | "tags"> &
-  Partial<Pick<Word, "example2" | "example3">>;
+  Partial<Pick<Word, "example2" | "example3" | "synonyms" | "antonyms">>;
 
 export type ImportItem = WordInput &
   Partial<Pick<Word, "box" | "due" | "correct" | "wrong" | "starred" | "deck">>;

@@ -33,6 +33,8 @@ export function makeWord(input: WordInput, createdAt: number = Date.now()): Word
     example: (input.example ?? "").trim(),
     example2: (input.example2 ?? "").trim(),
     example3: (input.example3 ?? "").trim(),
+    synonyms: (input.synonyms ?? []).slice(0, 5),
+    antonyms: (input.antonyms ?? []).slice(0, 5),
     tags: input.tags ?? [],
     box: 0,
     due: 0,
@@ -114,6 +116,22 @@ export function findClozeBlank(example: string, english: string): ClozeBlank | n
     }
   }
   return null;
+}
+
+/** Comma/semicolon separated words, trimmed, de-duplicated (case-insensitive), capped. */
+export function parseWordList(text: string, max = 5): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of text.split(/[,;]/)) {
+    const w = raw.trim();
+    if (!w) continue;
+    const key = w.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(w);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function wordKey(english: string, bangla: string) {
