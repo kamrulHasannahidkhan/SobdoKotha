@@ -307,8 +307,14 @@ export default function WordsPage() {
                       <span className="pips" role="img" aria-label={`Level ${w.box} of ${MAX_BOX}`}>
                         {Array.from({ length: MAX_BOX }, (_, i) => <i key={i} className={i < w.box ? "on" : ""} />)}
                       </span>
-                      {w.tags.map((t) => <span key={t} className="chip">{t}</span>)}
+                                          {w.tags.map((t) => <span key={t} className="chip">{t}</span>)}
                     </p>
+                    {(w.synonyms.length > 0 || w.antonyms.length > 0) && (
+                      <p className="muted" style={{ marginTop: 4 }}>
+                        {w.synonyms.length > 0 && <>Syn: {w.synonyms.join(", ")} </>}
+                        {w.antonyms.length > 0 && <>Ant: {w.antonyms.join(", ")}</>}
+                      </p>
+                    )}
                   </div>
                   <div className="w-actions">
                     <button className="btn small ghost" onClick={() => toggleStar(w.id)} aria-pressed={w.starred} aria-label={w.starred ? `Unstar ${w.english}` : `Star ${w.english}`}>

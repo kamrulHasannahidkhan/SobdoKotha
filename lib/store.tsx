@@ -186,7 +186,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     addWord: (input, deck) =>
       setState((s) => ({ ...s, words: [{ ...makeWord(input), deck }, ...s.words] })),
 
-    updateWord: (id, input) =>
+      updateWord: (id, input) =>
       setState((s) => ({
         ...s,
         words: s.words.map((w) =>
@@ -198,6 +198,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 pos: input.pos,
                 example: input.example.trim(),
                 tags: input.tags,
+                synonyms: (input.synonyms ?? w.synonyms ?? []).slice(0, 5),
+                antonyms: (input.antonyms ?? w.antonyms ?? []).slice(0, 5),
               }
             : w,
         ),
