@@ -9,7 +9,7 @@ import { acceptedAnswers, findClozeBlank, firstGrapheme, normalize, shuffle } fr
 import { SpeakButton } from "@/components/SpeakButton";
 import type { Direction, Word } from "@/lib/types";
 
-type Mode = "flash" | "choice" | "type" | "cloze" | "game";
+type Mode = "flash" | "choice" | "type" | "cloze" | "synant" | "game";
 type DirSetting = Direction | "mixed";
 type Source = "due" | "new" | "weak" | "starred" | "all" | "range";
 type Order = "shuffled" | "serial";
@@ -25,35 +25,36 @@ const GAME_POINTS_BASE = 10;
 const GAME_POINTS_PER_STREAK = 2;
 const pointsFor = (streakBefore: number) => GAME_POINTS_BASE + Math.min(streakBefore, GAME_STREAK_CAP) * GAME_POINTS_PER_STREAK;
 
-/** Splits example fields or strings joined by semicolons/newlines into distinct sentences. */
-function getIndividualSentences(w: Word): string[] {
-  const rawExamples = [w.example, w.example2, w.example3].filter((s): s is string => !!s && s.trim().length > 0);
-  return rawExamples.flatMap((ex) =>
-    ex.split(/;\s*|\n+/).map((s) => s.trim()).filter(Boolean)
-  );
+/** All non-empty example sentences a word has, in order (simple, compound, complex). */
+function examplesOf(w: Word): string[] {
+  return [w.example, w.example2, w.example3].filter((s): s is string => !!s && s.trim().length > 0);
 }
 
 function hasClozeBlank(w: Word) {
-  return getIndividualSentences(w).some((sentence) => findClozeBlank(sentence, w.english));
+  return examplesOf(w).some((ex) => findClozeBlank(ex, w.english));
 }
 
-function eligible(words: Word[], tag: string, clozeOnly: boolean) {
+function hasSynAnt(w: Word) {
+  return w.synonyms.length > 0 || w.antonyms.length > 0;
+}
+
+function eligible(words: Word[], tag: string, extra?: (w: Word) => boolean) {
   return words.filter((w) => {
     if (tag && !w.tags.includes(tag)) return false;
-    if (clozeOnly && !hasClozeBlank(w)) return false;
+    if (extra && !extra(w)) return false;
     return true;
   });
 }
 
-function pool(words: Word[], source: Source, tag: string, clozeOnly = false) {
+function pool(words: Word[], source: Source, tag: string, extra?: (w: Word) => boolean) {
   const now = Date.now();
-  return eligible(words, tag, clozeOnly).filter((w) => {
+  return eligible(words, tag, extra).filter((w) => {
     switch (source) {
       case "due": return isDue(w, now);
       case "new": return isNew(w);
       case "weak": return isWeak(w);
       case "starred": return w.starred;
-      default: return true;
+      default: return true; // "all" and "range" (range is sliced separately)
     }
   });
 }
@@ -64,23 +65,19 @@ function buildQueue(
   tag: string,
   count: number,
   dir: DirSetting,
-  clozeOnly: boolean,
+  extra: ((w: Word) => boolean) | undefined,
   order: Order,
   range: { from: number; to: number },
 ): Item[] {
   let list: Word[];
   if (source === "range") {
-    const base = eligible(words, tag, clozeOnly);
+    const base = eligible(words, tag, extra);
     const from = Math.max(1, Math.min(range.from, base.length));
     const to = Math.max(from, Math.min(range.to, base.length));
-    
     list = base.slice(from - 1, to);
-    
-    if (order === "shuffled") {
-      list = shuffle(list);
-    }
+    if (order === "shuffled") list = shuffle(list);
   } else {
-    list = pool(words, source, tag, clozeOnly);
+    list = pool(words, source, tag, extra);
     if (order === "shuffled") list = shuffle(list);
     if (count > 0) list = list.slice(0, count);
   }
@@ -300,33 +297,25 @@ function Type({ word, dir, onDone }: CardProps) {
 /* ---------- fill in the blank ---------- */
 
 function Cloze({ word, onDone }: CardProps) {
-  const clozeItems = useMemo(() => {
-    const sentences = getIndividualSentences(word);
-    return sentences
-      .map((sentence) => ({
-        sentence,
-        blank: findClozeBlank(sentence, word.english),
-      }))
-      .filter((item): item is { sentence: string; blank: NonNullable<ReturnType<typeof findClozeBlank>> } => !!item.blank);
-  }, [word.id, word.english]);
-
+  const blank = useMemo(() => {
+    const candidates = examplesOf(word)
+      .map((ex) => findClozeBlank(ex, word.english))
+      .filter((b): b is NonNullable<typeof b> => !!b);
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [word.id]);
   const [value, setValue] = useState("");
   const [result, setResult] = useState<boolean | null>(null);
   const [hint, setHint] = useState(false);
-  const [showBangla, setShowBangla] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const allAnswers = useMemo(() => {
-    return Array.from(new Set(clozeItems.flatMap((item) => item.blank.answers)));
-  }, [clozeItems]);
-
   function check() {
-    if (!value.trim() || clozeItems.length === 0) return;
-    const isCorrect = allAnswers.includes(normalize(value));
-    setResult(isCorrect);
+    if (!value.trim() || !blank) return;
+    setResult(blank.answers.includes(normalize(value)));
   }
 
-  if (clozeItems.length === 0) {
+  if (!blank) {
     return (
       <>
         <div className="card compact">
@@ -343,42 +332,16 @@ function Cloze({ word, onDone }: CardProps) {
   return (
     <>
       <div className="card compact">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-          <div className="pos-line" style={{ minHeight: "1.5rem" }}>
-            {showBangla ? (
-              <span lang="bn" style={{ fontWeight: 600, fontSize: "1.1rem" }}>
-                {word.bangla} {word.pos ? <span className="muted" style={{ fontWeight: 400 }}>· {word.pos}</span> : ""}
-              </span>
-            ) : (
-              <span className="muted" style={{ fontStyle: "italic", fontSize: "0.9rem" }}>Bangla meaning hidden</span>
-            )}
-          </div>
-          <button 
-            type="button" 
-            className="btn small ghost"
-            onClick={() => setShowBangla((prev) => !prev)}
-            title="Toggle Bangla meaning"
-          >
-            {showBangla ? "Hide Bangla" : "Show Bangla"}
-          </button>
-        </div>
-        
-        <ul className="cloze-list space-y-2 my-2">
-          {clozeItems.map(({ blank }, idx) => (
-            <li key={idx} className="prompt cloze-sentence" lang="en">
-              <span className="muted mr-2">{idx + 1}.</span>
-              {blank.before}
-              <span className="cloze-gap">
-                {result === null 
-                  ? "_____" 
-                  : blank.answers.find((a) => a !== normalize(word.english)) ?? word.english}
-              </span>
-              {blank.after}
-            </li>
-          ))}
-        </ul>
+        <p className="muted pos-line">
+          {word.bangla}
+          {word.pos ? ` · ${word.pos}` : ""}
+        </p>
+        <p className="prompt cloze-sentence" lang="en">
+          {blank.before}
+          <span className="cloze-gap">{result === null ? "_____" : blank.answers.find((a) => a !== normalize(word.english)) ?? word.english}</span>
+          {blank.after}
+        </p>
       </div>
-
       <div className="typebox">
         <label htmlFor="cloze-typed">Type the missing word</label>
         <input
@@ -401,12 +364,11 @@ function Cloze({ word, onDone }: CardProps) {
         />
         {result === null && hint && <p className="muted">Starts with <b lang="en">{firstGrapheme(word.english)}</b></p>}
       </div>
-
       {result === null ? (
         <div className="actions">
           <button className="btn primary" onClick={check} disabled={!value.trim()}>Check <kbd>Enter</kbd></button>
           <button className="btn" onClick={() => setHint(true)} disabled={hint}>Hint</button>
-          <button className="btn ghost" onClick={() => onDone(false)}>I don’t know</button>
+          <button className="btn ghost" onClick={() => setResult(false)}>I don’t know</button>
         </div>
       ) : (
         <>
@@ -414,6 +376,94 @@ function Cloze({ word, onDone }: CardProps) {
             {result ? "Correct." : <>Not quite. The word is <b lang="en">{word.english}</b></>}
           </p>
           <SpeakButton text={word.english} />
+          <div className="actions">
+            <button className="btn primary" onClick={() => onDone(result)}>Next <kbd>Enter</kbd></button>
+            {!result && value.trim() && (
+              <button className="btn" onClick={() => setResult(true)}>Count as correct</button>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+/* ---------- synonyms & antonyms ---------- */
+
+function SynAnt({ word, onDone }: CardProps) {
+  const relation = useMemo(() => {
+    const hasSyn = word.synonyms.length > 0;
+    const hasAnt = word.antonyms.length > 0;
+    if (hasSyn && hasAnt) return Math.random() < 0.5 ? "synonym" : "antonym";
+    return hasSyn ? "synonym" : "antonym";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [word.id]);
+  const answers = relation === "synonym" ? word.synonyms : word.antonyms;
+  const normAnswers = useMemo(() => answers.map((a) => normalize(a)), [answers]);
+  const [value, setValue] = useState("");
+  const [result, setResult] = useState<boolean | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function check() {
+    if (!value.trim()) return;
+    setResult(normAnswers.includes(normalize(value)));
+  }
+
+  if (answers.length === 0) {
+    return (
+      <>
+        <div className="card compact">
+          <p className="prompt" lang="en">{word.english}</p>
+          <p className="muted pos-line">No synonyms or antonyms saved for this word.</p>
+        </div>
+        <div className="actions">
+          <button className="btn primary" onClick={() => onDone(false)}>Skip <kbd>Enter</kbd></button>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="card compact">
+        <p className="prompt" lang="en">{word.english}</p>
+        <p className="muted pos-line">
+          {word.bangla}
+          {word.pos ? ` · ${word.pos}` : ""}
+        </p>
+        <SpeakButton text={word.english} />
+      </div>
+      <div className="typebox">
+        <label htmlFor="synant-typed">Type a {relation}</label>
+        <input
+          id="synant-typed"
+          ref={inputRef}
+          autoFocus
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          lang="en"
+          value={value}
+          readOnly={result !== null}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            if (result === null) check();
+            else onDone(result);
+          }}
+        />
+      </div>
+      {result === null ? (
+        <div className="actions">
+          <button className="btn primary" onClick={check} disabled={!value.trim()}>Check <kbd>Enter</kbd></button>
+          <button className="btn ghost" onClick={() => setResult(false)}>I don’t know</button>
+        </div>
+      ) : (
+        <>
+          <p className={`verdict ${result ? "good" : "bad"}`} role="status">
+            {result ? "Correct." : <>Not quite. Accepted: <b lang="en">{answers.join(", ")}</b></>}
+          </p>
           <div className="actions">
             <button className="btn primary" onClick={() => onDone(result)}>Next <kbd>Enter</kbd></button>
             {!result && value.trim() && (
@@ -508,7 +558,7 @@ function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mo
     );
   }
 
-  const Card = mode === "flash" ? Flash : mode === "choice" ? Choice : mode === "cloze" ? Cloze : Type;
+  const Card = mode === "flash" ? Flash : mode === "choice" ? Choice : mode === "cloze" ? Cloze : mode === "synant" ? SynAnt : Type;
   return (
     <>
       <div className="session-head">
@@ -550,16 +600,16 @@ export default function PracticePage() {
   if (!ready) return <p className="muted">Opening your notebook…</p>;
 
   const tags = Array.from(new Set(deckWords.flatMap((w) => w.tags))).sort();
-  const clozeOnly = mode === "cloze";
-  const eligibleWords = eligible(deckWords, tag, clozeOnly);
-  const available = source === "range" ? eligibleWords.length : pool(deckWords, source, tag, clozeOnly).length;
+  const extraFilter = mode === "cloze" ? hasClozeBlank : mode === "synant" ? hasSynAnt : undefined;
+  const eligibleWords = eligible(deckWords, tag, extraFilter);
+  const available = source === "range" ? eligibleWords.length : pool(deckWords, source, tag, extraFilter).length;
   const rangeFrom = Math.max(1, Math.min(range.from || 1, eligibleWords.length || 1));
   const rangeTo = Math.max(rangeFrom, Math.min(range.to || rangeFrom, eligibleWords.length || 1));
   const planned = source === "range" ? Math.max(0, Math.min(rangeTo, eligibleWords.length) - rangeFrom + 1) : count > 0 ? Math.min(count, available) : available;
   const choiceOk = words.length >= 2;
 
   function start() {
-    setItems(buildQueue(deckWords, source, tag, count, dir, clozeOnly, order, range));
+    setItems(buildQueue(deckWords, source, tag, count, dir, extraFilter, order, range));
     setRun((r) => r + 1);
   }
 
@@ -571,7 +621,7 @@ export default function PracticePage() {
     source === "range"
       ? planned === 0
         ? "That range has no eligible words. Adjust the numbers above."
-        : `Words ${rangeFrom} to ${Math.min(rangeTo, eligibleWords.length)} of ${eligibleWords.length}${order === "serial" ? ", in list order" : ", shuffled within range"}.`
+        : `Words ${rangeFrom} to ${Math.min(rangeTo, eligibleWords.length)} of ${eligibleWords.length}, in list order.`
       : available === 0
         ? source === "due" && !tag
           ? "Nothing is due right now. Pick “All words” to practice anyway."
@@ -605,6 +655,7 @@ export default function PracticePage() {
             { value: "choice", label: "Multiple choice", disabled: !choiceOk },
             { value: "type", label: "Type the answer" },
             { value: "cloze", label: "Fill in the blank" },
+            { value: "synant", label: "Synonyms & Antonyms" },
             { value: "game", label: "Game (score points)" },
           ]}
         />
@@ -717,7 +768,10 @@ export default function PracticePage() {
         <p className="muted">Type the answer for each word. Correct answers score points, and a streak of correct answers earns a bonus.</p>
       )}
       {mode === "cloze" && (
-        <p className="muted">You'll see all example sentences for a word at once with the word blanked out. Use the "Show Bangla" button if you need a hint.</p>
+        <p className="muted">You'll see each word's example sentence with the word blanked out — type the missing word. Direction doesn't apply here; only words with a usable example sentence are included.</p>
+      )}
+      {mode === "synant" && (
+        <p className="muted">You'll be asked to type a synonym or an antonym for each word. Only words with at least one saved are included.</p>
       )}
 
       <p className="notice" role="status">{note}</p>
