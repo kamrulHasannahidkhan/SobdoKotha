@@ -143,7 +143,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // The old built-in lists (starter / gre500) are dropped; words you added yourself move to "My words".
           words: stored
             .filter((w) => !(w.deck === undefined && ((w.tags ?? []).includes("starter") || (w.tags ?? []).includes("gre500"))))
-            .map((w) => ({ ...w, deck: w.deck ?? "mine" })),
+            .map((w) => ({ ...w, deck: w.deck ?? "mine", synonyms: w.synonyms ?? [], antonyms: w.antonyms ?? [] })),
           stats: { ...DEFAULT_STATS, ...(p.stats ?? {}) },
           gameResults: Array.isArray(p.gameResults) ? p.gameResults : [],
           seeded: Array.isArray(p.seeded) ? p.seeded : [],
