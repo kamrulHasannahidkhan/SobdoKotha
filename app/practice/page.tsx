@@ -294,48 +294,33 @@ function Type({ word, dir, onDone }: CardProps) {
   );
 }
 
-/* ---------- fill in the blank (multiple choice) ---------- */
+/* ---------- fill in the blank (all example sentences, one shared blank) ---------- */
 
 function Cloze({ word, onDone }: CardProps) {
-  const { words } = useStore();
-  const blank = useMemo(() => {
-    const candidates = examplesOf(word)
+  const blanks = useMemo(() => {
+    return examplesOf(word)
       .map((ex) => findClozeBlank(ex, word.english))
       .filter((b): b is NonNullable<typeof b> => !!b);
-    if (candidates.length === 0) return null;
-    return candidates[Math.floor(Math.random() * candidates.length)];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [word.id]);
 
-  const options = useMemo(() => {
-    const correct = word.english;
-    const others = shuffle(
-      words
-        .filter((w) => w.id !== word.id && normalize(w.english) !== normalize(correct))
-        .map((w) => w.english),
-    );
-    return shuffle([correct, ...Array.from(new Set(others)).slice(0, 3)]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [word.id]);
+  const allAnswers = useMemo(() => {
+    const set = new Set<string>();
+    blanks.forEach((b) => b.answers.forEach((a) => set.add(a)));
+    return Array.from(set);
+  }, [blanks]);
 
-  const [picked, setPicked] = useState<string | null>(null);
+  const [value, setValue] = useState("");
+  const [result, setResult] = useState<boolean | null>(null);
+  const [hint, setHint] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!blank) return;
-      if (picked === null) {
-        const n = parseInt(e.key, 10);
-        if (n >= 1 && n <= options.length) setPicked(options[n - 1]);
-      } else if ((e.key === "Enter" || e.key === " ") && !(e.target as HTMLElement).closest("button")) {
-        e.preventDefault();
-        onDone(normalize(picked) === normalize(word.english));
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [picked, options, blank, word.english, onDone]);
+  function check() {
+    if (!value.trim()) return;
+    setResult(allAnswers.includes(normalize(value)));
+  }
 
-  if (!blank) {
+  if (blanks.length === 0) {
     return (
       <>
         <div className="card compact">
@@ -349,8 +334,6 @@ function Cloze({ word, onDone }: CardProps) {
     );
   }
 
-  const correct = normalize(picked ?? "") === normalize(word.english);
-
   return (
     <>
       <div className="card compact">
@@ -358,31 +341,53 @@ function Cloze({ word, onDone }: CardProps) {
           {word.bangla}
           {word.pos ? ` · ${word.pos}` : ""}
         </p>
-        <p className="prompt cloze-sentence" lang="en">
-          {blank.before}
-          <span className="cloze-gap">{picked === null ? "_____" : word.english}</span>
-          {blank.after}
-        </p>
+        {blanks.map((b, i) => (
+          <p key={i} className="prompt cloze-sentence" lang="en">
+            {b.before}
+            <span className="cloze-gap">{result === null ? "_____" : (b.answers.find((a) => a !== normalize(word.english)) ?? word.english)}</span>
+            {b.after}
+          </p>
+        ))}
       </div>
-      <div className="options" role="group" aria-label="Choose the missing word">
-        {options.map((o, i) => {
-          const state = picked === null ? "" : normalize(o) === normalize(word.english) ? "good" : o === picked ? "bad" : "dim";
-          return (
-            <button key={o} className={`opt ${state}`} lang="en" disabled={picked !== null} onClick={() => setPicked(o)}>
-              <kbd>{i + 1}</kbd>
-              {o}
-            </button>
-          );
-        })}
+      <div className="typebox">
+        <label htmlFor="cloze-typed">Type the missing word (fills all {blanks.length > 1 ? "blanks" : "blank"} above)</label>
+        <input
+          id="cloze-typed"
+          ref={inputRef}
+          autoFocus
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          lang="en"
+          value={value}
+          readOnly={result !== null}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            if (result === null) check();
+            else onDone(result);
+          }}
+        />
+        {result === null && hint && <p className="muted">Starts with <b lang="en">{firstGrapheme(word.english)}</b></p>}
       </div>
-      {picked !== null && (
+      {result === null ? (
+        <div className="actions">
+          <button className="btn primary" onClick={check} disabled={!value.trim()}>Check <kbd>Enter</kbd></button>
+          <button className="btn" onClick={() => setHint(true)} disabled={hint}>Hint</button>
+          <button className="btn ghost" onClick={() => setResult(false)}>I don’t know</button>
+        </div>
+      ) : (
         <>
-          <p className={`verdict ${correct ? "good" : "bad"}`} role="status">
-            {correct ? "Correct." : "Not quite."}
+          <p className={`verdict ${result ? "good" : "bad"}`} role="status">
+            {result ? "Correct." : <>Not quite. The word is <b lang="en">{word.english}</b></>}
           </p>
           <SpeakButton text={word.english} />
           <div className="actions">
-            <button className="btn primary" autoFocus onClick={() => onDone(correct)}>Next <kbd>Enter</kbd></button>
+            <button className="btn primary" onClick={() => onDone(result)}>Next <kbd>Enter</kbd></button>
+            {!result && value.trim() && (
+              <button className="btn" onClick={() => setResult(true)}>Count as correct</button>
+            )}
           </div>
         </>
       )}
@@ -770,7 +775,7 @@ export default function PracticePage() {
         <p className="muted">Type the answer for each word. Correct answers score points, and a streak of correct answers earns a bonus.</p>
       )}
       {mode === "cloze" && (
-        <p className="muted">You'll see each word's example sentence with the word blanked out — pick the right word from 4 options. Direction doesn't apply here; only words with a usable example sentence are included.</p>
+        <p className="muted">You'll see every saved example sentence for the word, each with the word blanked out, and type it once to fill them all. Direction doesn't apply here; only words with at least one usable example sentence are included.</p>
       )}
       {mode === "synant" && (
         <p className="muted">You'll be asked to type a synonym or an antonym for each word. Only words with at least one saved are included.</p>

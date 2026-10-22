@@ -97,14 +97,13 @@ export type ClozeBlank = { before: string; after: string; answers: string[] };
 /**
  * Finds the English target word (or an inflected form of it, e.g. "acquiesced"
  * for "acquiesce") inside an example sentence, so it can be blanked out for a
- * fill-in-the-blank exercise. Returns null when no example is set or the word
- * can't be located in it.
+ * fill-in-the-blank exercise. Some saved examples bundle multiple sentences
+ * into one field, so this splits on sentence boundaries first and only ever
+ * returns the single sentence the word was actually found in.
  */
 export function findClozeBlank(example: string, english: string): ClozeBlank | null {
   const base = normalize(english);
   if (!example || !base) return null;
-  // Some saved examples have multiple sentences bundled into one field —
-  // split on sentence boundaries first so the blank only spans one sentence.
   const sentences = example.split(/(?<=[.!?;])\s+/).filter(Boolean);
   const re = /[A-Za-z][A-Za-z'-]*/g;
   for (const sentence of sentences) {
