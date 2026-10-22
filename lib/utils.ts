@@ -103,17 +103,23 @@ export type ClozeBlank = { before: string; after: string; answers: string[] };
 export function findClozeBlank(example: string, english: string): ClozeBlank | null {
   const base = normalize(english);
   if (!example || !base) return null;
+  // Some saved examples have multiple sentences bundled into one field —
+  // split on sentence boundaries first so the blank only spans one sentence.
+  const sentences = example.split(/(?<=[.!?;])\s+/).filter(Boolean);
   const re = /[A-Za-z][A-Za-z'-]*/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(example))) {
-    const token = m[0];
-    const tnorm = normalize(token);
-    if (tnorm.length >= 3 && (tnorm.startsWith(base) || base.startsWith(tnorm))) {
-      return {
-        before: example.slice(0, m.index),
-        after: example.slice(m.index + token.length),
-        answers: Array.from(new Set([tnorm, base])),
-      };
+  for (const sentence of sentences) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(sentence))) {
+      const token = m[0];
+      const tnorm = normalize(token);
+      if (tnorm.length >= 3 && (tnorm.startsWith(base) || base.startsWith(tnorm))) {
+        return {
+          before: sentence.slice(0, m.index),
+          after: sentence.slice(m.index + token.length),
+          answers: Array.from(new Set([tnorm, base])),
+        };
+      }
     }
   }
   return null;
