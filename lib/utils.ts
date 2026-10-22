@@ -35,6 +35,7 @@ export function makeWord(input: WordInput, createdAt: number = Date.now()): Word
     example3: (input.example3 ?? "").trim(),
     synonyms: (input.synonyms ?? []).slice(0, 5),
     antonyms: (input.antonyms ?? []).slice(0, 5),
+    note: (input.note ?? "").trim(),
     tags: input.tags ?? [],
     box: 0,
     due: 0,

@@ -22,6 +22,7 @@ export function WordForm({ initial, submitLabel, onSubmit, onCancel }: Props) {
   const [tags, setTags] = useState(initial?.tags.join(", ") ?? "");
   const [synonyms, setSynonyms] = useState(initial?.synonyms?.join(", ") ?? "");
   const [antonyms, setAntonyms] = useState(initial?.antonyms?.join(", ") ?? "");
+  const [note, setNote] = useState(initial?.note ?? "");
   const [error, setError] = useState<string | null>(null);
   const englishRef = useRef<HTMLInputElement>(null);
 
@@ -39,6 +40,7 @@ export function WordForm({ initial, submitLabel, onSubmit, onCancel }: Props) {
       tags: parseTags(tags),
       synonyms: parseWordList(synonyms),
       antonyms: parseWordList(antonyms),
+      note,
     });
     if (err) {
       setError(err);
@@ -51,6 +53,7 @@ export function WordForm({ initial, submitLabel, onSubmit, onCancel }: Props) {
       setExample("");
       setSynonyms("");
       setAntonyms("");
+      setNote("");
       englishRef.current?.focus();
     }
   }
@@ -120,6 +123,16 @@ export function WordForm({ initial, submitLabel, onSubmit, onCancel }: Props) {
           lang="en"
           autoComplete="off"
           placeholder="scarce, sparse"
+        />
+      </div>
+      <div className="field wide">
+        <label htmlFor="wf-note">Your note (mnemonic, usage tip, anything)</label>
+        <textarea
+          id="wf-note"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          placeholder="e.g. sounds like 'abate' + a storm calming down"
         />
       </div>
       <div className="field wide">
