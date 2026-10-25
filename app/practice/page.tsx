@@ -386,8 +386,8 @@ function Cloze({ word, onDone }: CardProps) {
       </div>
       {picked !== null && (
         <>
-          <p className={`verdict ${correct ? "good" : "bad"}`} role="status">
-            {correct ? "Correct." : "Not quite."}
+                    <p className={`verdict ${correct ? "good" : "bad"}`} role="status">
+            {correct ? "Correct." : "Not quite."} <b lang="bn">{word.bangla}</b>
           </p>
           <SpeakButton text={word.english} />
           <div className="actions">
