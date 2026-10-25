@@ -25,9 +25,20 @@ const GAME_POINTS_BASE = 10;
 const GAME_POINTS_PER_STREAK = 2;
 const pointsFor = (streakBefore: number) => GAME_POINTS_BASE + Math.min(streakBefore, GAME_STREAK_CAP) * GAME_POINTS_PER_STREAK;
 
-/** All non-empty example sentences a word has, in order (simple, compound, complex). */
+/**
+ * All non-empty example sentences a word has, in order (simple, compound,
+ * complex). Some saved words have all 3 sentences bundled into the single
+ * `example` field (example2/example3 left empty) — when that's the only
+ * field set, split it on sentence boundaries so each sentence is still
+ * usable on its own.
+ */
 function examplesOf(w: Word): string[] {
-  return [w.example, w.example2, w.example3].filter((s): s is string => !!s && s.trim().length > 0);
+  const raw = [w.example, w.example2, w.example3].filter((s): s is string => !!s && s.trim().length > 0);
+  if (raw.length === 1) {
+    const parts = raw[0].split(/(?<=[.!?;])\s+/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 1) return parts.slice(0, 3);
+  }
+  return raw;
 }
 
 function hasClozeBlank(w: Word) {
@@ -353,10 +364,7 @@ function Cloze({ word, onDone }: CardProps) {
   return (
     <>
       <div className="card compact">
-        <p className="muted pos-line">
-          {word.bangla}
-          {word.pos ? ` · ${word.pos}` : ""}
-        </p>
+        {word.pos && <p className="muted pos-line">{word.pos}</p>}
         {blanks.map((b, i) => (
           <p key={i} className="prompt cloze-sentence" lang="en">
             {b.before}
