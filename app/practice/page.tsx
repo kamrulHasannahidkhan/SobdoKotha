@@ -572,9 +572,14 @@ function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mo
   const Card = mode === "flash" ? Flash : mode === "choice" ? Choice : mode === "cloze" ? Cloze : mode === "synant" ? SynAnt : Type;
   return (
     <>
-      <div className="session-head">
+            <div className="session-head">
         <button className="btn small ghost" onClick={onExit}>End session</button>
         <span className="muted">{idx + 1} of {queue.length}</span>
+        {pctSoFar !== null && (
+          <span className={`chip ${pctSoFar >= 70 ? "good" : pctSoFar >= 40 ? "" : "bad"}`}>
+            {pctSoFar}% right ({rightSoFar}/{answered})
+          </span>
+        )}
         {isGame && <span className="chip">{points} pts</span>}
         {isGame && streak > 1 && <span className="chip">Streak {streak}</span>}
         {item.tries > 0 && <span className="chip">second look</span>}
