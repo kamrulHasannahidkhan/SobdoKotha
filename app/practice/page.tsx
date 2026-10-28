@@ -24,7 +24,6 @@ const GAME_STREAK_CAP = 5;
 const GAME_POINTS_BASE = 10;
 const GAME_POINTS_PER_STREAK = 2;
 const pointsFor = (streakBefore: number) => GAME_POINTS_BASE + Math.min(streakBefore, GAME_STREAK_CAP) * GAME_POINTS_PER_STREAK;
-
 /**
  * All non-empty example sentences a word has, in order (simple, compound,
  * complex). Some saved words have all 3 sentences bundled into the single
@@ -544,8 +543,8 @@ function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mo
           {log.length === 0
             ? "No answers this time."
             : isGame
-              ? <>{right} of {log.length} correct — {points} points{isNewBest && <span className="chip"> New best</span>}</>
-              : `${right} of ${log.length} right on the first try.`}
+                          ? <>{right} of {log.length} correct ({Math.round((right / log.length) * 100)}%) — {points} points{isNewBest && <span className="chip"> New best</span>}</>
+              : `${right} of ${log.length} right on the first try (${Math.round((right / log.length) * 100)}%).`}
         </p>
         {missed.length > 0 && (
           <section className="block">
@@ -569,8 +568,11 @@ function Session({ initial, mode, onExit, onAgain }: { initial: Item[]; mode: Mo
     );
   }
 
-  const Card = mode === "flash" ? Flash : mode === "choice" ? Choice : mode === "cloze" ? Cloze : mode === "synant" ? SynAnt : Type;
-  return (
+  const answered = log.length;
+  const rightSoFar = answered > 0 ? log.filter((l) => l.correct).length : 0;
+  const pctSoFar = answered > 0 ? Math.round((rightSoFar / answered) * 100) : null;
+
+  const Card = mode === "flash" ? Flash : mode === "choice" ? Choice : mode === "cloze" ? Cloze : mode === "synant" ? SynAnt : Type;  return (
     <>
             <div className="session-head">
         <button className="btn small ghost" onClick={onExit}>End session</button>
