@@ -13,6 +13,7 @@ import { grade } from "./srs";
 import { BUILTIN_DECKS, DECKS, deckOf, seedKey, type DeckId } from "./decks";
 import { defaultInterviewQuestions, defaultReadingPassages } from "./speaking-seed";
 import { dayKey, daysAgo, makeWord, uid, wordKey } from "./utils";
+import { applyRelations } from "./relations";
 
 const KEY = "shobdo-khata:v1";
 const DEFAULT_STATS: Stats = { streak: 0, bestStreak: 0, lastDay: "", history: {}, dailyGoal: 20, dailyTasks: {} };
@@ -153,8 +154,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch {
       /* corrupted or blocked storage: start fresh */
     }
-    const seeded = seedBuiltins(base.words, base.seeded);
-    const seededSpeaking = [...seeded.seeded];
+    const seeded = applyRelations(seedBuiltins(base.words, base.seeded));    const seededSpeaking = [...seeded.seeded];
     let interviewQuestions = base.interviewQuestions;
     let readingPassages = base.readingPassages;
     if (!seededSpeaking.includes("speaking:v1")) {
